@@ -1,0 +1,10 @@
+{
+  "name": "pixel-pet",
+  "version": "0.8.0",
+  "description": "Bit the pixel puppy: sessions board (waiting, running, merged, idle), merge-ready lane, push guard and failure classifier, CI why, preview chip, Slack inbox with per-message dismiss, needs-you inbox, usage projection, hygiene guards, actions pane with a favorite, /bit rituals, worktree janitor, merge impact watch; plus plan progress, cache line with Summarize, start fresh, critique, ELI5",
+  "author": {
+    "name": "Eran Peled",
+    "email": "26306982+eranltd@users.noreply.github.com"
+  },
+  "types": "./types/index.d.ts"
+}

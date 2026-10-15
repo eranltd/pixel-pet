@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bit launch posts</title>
+<style>
+  :root {
+    --bg: #fafaf8;
+    --panel: #ffffff;
+    --ink: #1b1b1f;
+    --muted: #6b6b73;
+    --line: #e4e3df;
+    --accent: #2f7d5b;
+    --accent-soft: #e6f3ec;
+    --code-bg: #f1f1ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151518;
+      --panel: #1e1e22;
+      --ink: #ececec;
+      --muted: #9a9aa3;
+      --line: #2c2c32;
+      --accent: #6cc79a;
+      --accent-soft: #1f2f27;
+      --code-bg: #26262b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151518; --panel: #1e1e22; --ink: #ececec; --muted: #9a9aa3; --line: #2c2c32; --accent: #6cc79a; --accent-soft: #1f2f27; --code-bg: #26262b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 17px/1.6 -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+  .lede { color: var(--muted); margin: 0 0 32px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px 28px 24px;
+    margin-bottom: 28px;
+  }
+  section > header {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 20px;
+  }
+  section > header h2 { margin: 0; font-size: 20px; }
+  .badge {
+    font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft);
+    border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+  }
+  .post h3 { font-size: 24px; line-height: 1.25; margin: 0 0 6px; }
+  .post .sub { color: var(--muted); font-style: italic; margin: 0 0 24px; }
+  .post h4 { font-size: 18px; margin: 28px 0 8px; }
+  .post p { margin: 0 0 14px; }
+  .post ul { padding-left: 22px; margin: 0 0 14px; }
+  .post li { margin-bottom: 6px; }
+  pre {
+    background: var(--code-bg); border-radius: 8px; padding: 14px 16px;
+    overflow-x: auto; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    margin: 0 0 16px;
+  }
+  code { font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre code { background: none; padding: 0; }
+  .linkedin { white-space: pre-wrap; }
+  .note { color: var(--muted); font-size: 14px; margin-top: 18px; }
+  .shot {
+    border: 1px dashed var(--line); border-radius: 8px; padding: 18px; text-align: center;
+    color: var(--muted); font-size: 14px; margin: 0 0 16px;
+  }
+  .fig { margin: 0 0 18px; } .fig img { width: 100%; border-radius: 10px; border: 1px solid var(--line); display: block; } .fig.narrow img { max-width: 520px; margin: 0 auto; } .fig figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; text-align: center; }
+  @media (max-width: 480px) { section { padding: 20px 16px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bit launch posts</h1>
+  <p class="lede">Two drafts, ready to paste. Images live in <code>docs/images/</code> in the repo: upload them where each post shows one.</p>
+
+  <section>
+    <header>
+      <h2>LinkedIn</h2>
+      <span class="badge">about 210 words</span>
+    </header>
+    <figure class="fig"><img src="docs/images/app-demo.png" alt="A Claude Code session with Bit's band above the prompt"><figcaption>Attach this image to the post. Every name and message in it is made up.</figcaption></figure>
+    <div class="linkedin">There is a pixel dog living above my terminal prompt.
+
+His name is Bit. He wags when my tests pass, droops when lint fails, hops when a task closes, and sits up when a tool call is waiting on me.
+
+He started as a Sunday joke. Then the band around him grew into the status board I actually needed: every Claude Code session on my machine, sorted by which one is blocked on me. The plan Claude is working through, with a progress bar. Slack messages waiting for a reply. My context budget. One favorite action button.
+
+None of it is a separate app. It is one TypeScript module that Claude Code loads at start, drawn with the same element kit the engine uses for its own UI.
+
+The part that stuck with me: I did not write most of it by hand. I described what I wanted, in sentences, while using the tool. "Move the dog to the corner." "Make him smaller." "Why is there a gap next to Slack?" Each one was a one-minute round trip.
+
+A tool you can reshape in conversation, while you use it, is a different kind of tool.
+
+The mod is open, with a guide for building your own pet from four files. Link in the comments: github.com/eranltd/pixel-pet
+
+#ClaudeCode #DeveloperTools #BuildInPublic</div>
+    <p class="note">Put the install line in the first comment, not the post body, so the link does not hurt reach: <code>/plugin install pixel-pet --marketplace eranltd/pixel-pet</code></p>
+  </section>
+
+  <section class="post">
+    <header>
+      <h2>Medium</h2>
+      <span class="badge">about 870 words</span>
+    </header>
+
+    <h3>I gave my terminal a dog, and now it tells me when my PR is merged</h3>
+    <p class="sub">A short story about a pixel puppy, a few hundred lines of TypeScript, and the moment Claude Code became something I could reshape.</p>
+
+    <figure class="fig"><img src="docs/images/app-demo.png" alt="A Claude Code session with Bit's band above the prompt"><figcaption>A mock of a running session. Every name and message is made up.</figcaption></figure>
+
+    <p>There is a 26×18 pixel dog living above my prompt. His name is Bit. He wags when my tests pass, droops when a lint check fails, hops when a task closes, and falls asleep if I walk away for too long. When a tool call waits on my permission he sits up and the band says <code>needs you</code>.</p>
+    <p>He is also, quietly, the most useful thing on my screen.</p>
+
+    <h4>Why a dog</h4>
+    <p>I run a lot of Claude Code sessions in parallel. One is on a feature branch, one is reviewing a teammate's PR, one is babysitting CI, one is half an idea I started at lunch. The sidebar lists them, but it does not tell me which one is blocked on me, which one just merged, or which one has been idle for an hour.</p>
+    <p>I wanted a status board. Nobody builds a status board on a Sunday. People do build a dog.</p>
+    <p>So the dog came first, as a joke, and the board grew around him because once there was a band above the prompt, every "I wish I could see…" had somewhere to go.</p>
+
+    <figure class="fig narrow"><img src="docs/images/sprite-poses.png" alt="Bit ready, working and passed"></figure>
+    <h4>What the band shows now</h4>
+    <ul>
+      <li><strong>Bit</strong>, top-left, with his state under him.</li>
+      <li><strong>Sessions</strong>: every Claude Code session on my machine. The ones waiting on me sort to the top, then the running ones, then merged, then idle. Each row links to its session and its PR.</li>
+      <li><strong>The plan</strong>: the phase dots, a progress bar, and one row per task, pulled from the task list Claude writes as it works.</li>
+      <li><strong>Slack</strong>: messages waiting for me, with a tick to dismiss each one.</li>
+      <li><strong>The context line</strong>: cache age, context used, rate-limit budget, and a button that summarizes and starts a fresh session.</li>
+      <li><strong>One favorite action</strong> and an actions pane behind it: ELI5 the topic, draft a Slack update, open a ticket, run the checks, take PR screenshots.</li>
+    </ul>
+    <p>None of this is a separate app. It is one hooks module that Claude Code loads at start, drawn with the same element kit the engine uses for its own UI.</p>
+
+    <figure class="fig"><img src="docs/images/band-demo.png" alt="The band up close"><figcaption>The band up close.</figcaption></figure>
+    <h4>How it is built</h4>
+    <p>A Claude Code mod is a folder with three files: a manifest, a one-line file that names the hooks module, and the module itself. A fourth file declares the state the drawing reads.</p>
+    <p>The module runs in a sandbox of its own. No DOM, no Node, no <code>fetch</code>. Everything outside it is reached through one object, <code>$</code>, with nouns on it: <code>$.ui</code>, <code>$.clock</code>, <code>$.state</code>, <code>$.fs</code>, <code>$.process</code>. You register hooks on events, and every hook has the same shape: the engine object, the event, and a <code>next</code> to pass it on.</p>
+<pre><code>on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) =&gt; {
+  const { Box, Text, Svg } = $.ui.resolve(e)
+  return (
+    &lt;Box flexDirection="row"&gt;
+      &lt;Svg source={dogSvg(pose)} alt="Bit" width={39} height={27} isInteractive /&gt;
+      &lt;Text&gt;{pose}&lt;/Text&gt;
+    &lt;/Box&gt;
+  )
+})</code></pre>
+    <p>That is the whole idea. The band is a render hook. The <code>/pet</code> command is a command hook. The plan fills from a tool-call hook that watches Claude write its task list. The sessions board is a five-second heartbeat that writes a JSON snapshot per session and reads the others back.</p>
+    <p>The sprite is a list of strings, one character per pixel, mapped through a palette. On the desktop it becomes an SVG with SMIL animations, so the frames flip without redrawing the band. That detail matters: a redraw replaces the buttons under your pointer, and a wagging tail that steals your click is a bad dog.</p>
+
+    <h4>Why this is cool</h4>
+    <p>Not because of the dog.</p>
+    <p>It is cool because the surface I spend my day in stopped being fixed. I did not fork anything or patch a binary. I wrote a module against a typed API, the engine validated it, told me which state keys I forgot to declare, and loaded it. When something was wrong, one dim line in the transcript said what and why.</p>
+    <p>Every editor promises extensibility. Most deliver a plugin API you learn once a year. This one I learned in an afternoon because the model that runs in the terminal also knows how to write for it. I described the band I wanted, in sentences, and reviewed the result. Then I kept describing: move the dog to the corner, make him smaller, put the cache line at the bottom, why is there a gap next to Slack. Each one was a one-minute round trip.</p>
+    <p>That loop is the thing. A tool you can reshape in conversation, while you use it, is a different kind of tool.</p>
+
+    <h4>Try it</h4>
+    <p>The mod is open. Install it from a terminal Claude Code session:</p>
+<pre><code>/plugin install pixel-pet --marketplace eranltd/pixel-pet</code></pre>
+    <p>Or read the README, which walks through building your own pet from four files. Start with a cat. Give it a tail that flicks. See where it takes you.</p>
+  </section>
+</main>
+</body>
+</html>

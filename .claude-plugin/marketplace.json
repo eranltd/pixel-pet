@@ -1,0 +1,5 @@
+{
+  "name": "pixel-pet",
+  "owner": { "name": "Eran Peled" },
+  "plugins": [{ "name": "pixel-pet", "source": "./" }]
+}
