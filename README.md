@@ -84,6 +84,8 @@ He also droops when a check fails, sits up with `needs you` when a tool call wai
 - **Bit** sits in the top-left corner with his state under him: `ready`, `working…`, `needs you`, `asleep · 12m idle`, `passed ✓`, `failed ✗`.
 - **Sessions** lists every Claude Code session on this machine that runs this mod: the ones waiting on you first, then running, merged, idle. Each row links to its session and its PR.
 - **The plan** to the right: the phase dots, a progress bar, one row per task, then the branch line.
+- **The ✕** at the top-right hides the band for this session only. A small 🐾 Bit button stays behind to bring it back; other sessions keep theirs.
+- **Narrow windows** get a compact layout: the blocks stack, Sessions shows three rows, Slack two, and the plan only its open task.
 - **The bottom row**: the collapse caret, a `master CI ✗` flag when it fails, the context and rate-limit line, the favorite action and the `actions` pane button. A Slack row appears above everything when a message waits.
 
 ### Check, type-check, test

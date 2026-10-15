@@ -1823,6 +1823,10 @@ async function refreshOthers($: EngineInterface) {
 }
 
 const SESSIONS_SHOWN = 5
+// Below this many columns the band stacks its blocks and trims rows, so it fits a narrow window without scrolling.
+const NARROW_COLUMNS = 120
+const NARROW_SESSIONS_SHOWN = 3
+const NARROW_SLACK_CONVOS_SHOWN = 2
 
 // The desktop app opens one of its sessions from this link; macOS `open` hands it over.
 // The app's id is the one it published to the session's process; a snapshot from an older Bit has none,
@@ -3043,9 +3047,19 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await read($, hiddenAtom))) {
+    if (e.props.hasSurvey) {
       return next(e)
     }
+    if (await read($, hiddenAtom)) {
+      if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e)
+      const { Box, Button } = $.ui.resolve(e)
+      return (
+        <Box flexDirection="row" justifyContent="flex-end">
+          <Button key="pet-reopen" plain dimColor label={`🐾 ${PET}`} onPress={() => void update($, hiddenAtom, () => false)} />
+        </Box>
+      )
+    }
+    const isNarrow = e.props.bodyColumns < NARROW_COLUMNS
     const mood = await read($, moodAtom)
     const plan = await read($, planAtom)
     const github = await read($, githubAtom)
@@ -3123,6 +3137,7 @@ export const register: Register = on => {
     const needy = others.filter(other => other.needsYou)
     // Sessions waiting on you first, then the running ones, then merged, then idle.
     const sessions = [...others].sort((a, b) => sessionRank(a) - sessionRank(b))
+    const sessionsShown = isNarrow ? NARROW_SESSIONS_SHOWN : SESSIONS_SHOWN
 
     const favorite = actionById(await read($, favoriteAtom))
     const actionRow = (
@@ -3139,7 +3154,7 @@ export const register: Register = on => {
     )
 
     const status = (
-      <Box key="pet-status" flexDirection="column" marginLeft={4} flexShrink={1} minWidth={30}>
+      <Box key="pet-status" flexDirection="column" marginLeft={isNarrow ? 0 : 4} marginTop={isNarrow ? 1 : 0} flexShrink={1} minWidth={30}>
         {mood.kind === 'happy' && mood.text !== '' && (
           <Text color="green" wrap="truncate-end">
             ✓ {mood.text}
@@ -3177,7 +3192,7 @@ export const register: Register = on => {
         </Box>
         {hasPlan && (
           <Box key="pet-tasks" flexDirection="column">
-            {plan.tasks.map(task => (
+            {plan.tasks.filter(task => !isNarrow || task.status === 'in_progress').map(task => (
               <Box key={`pt-${task.id}`} flexDirection="row" gap={1}>
                 {task.status === 'completed' ? (
                   <Text color="green">✔</Text>
@@ -3234,7 +3249,7 @@ export const register: Register = on => {
     )
 
     const queue = (
-      <Box key="pet-sessions" flexDirection="column" flexShrink={1} minWidth={40}>
+      <Box key="pet-sessions" flexDirection="column" flexShrink={1} minWidth={isNarrow ? 0 : 40}>
         <Box key="pet-sessions-label" flexDirection="row" gap={1}>
           <Text bold>Sessions</Text>
           <Text color={needy.length > 0 ? 'yellow' : 'gray'}>{String(sessions.length)}</Text>
@@ -3242,7 +3257,7 @@ export const register: Register = on => {
         </Box>
         <Box key="pet-sessions-rows" flexDirection="column" flexShrink={1}>
           {sessions.length === 0 && <Text dimColor>no other sessions</Text>}
-          {sessions.slice(0, SESSIONS_SHOWN).map(other => {
+          {sessions.slice(0, sessionsShown).map(other => {
             const [mark, text, color] = sessionState(other)
             const gist = sessionGist(other)
             return (
@@ -3263,7 +3278,7 @@ export const register: Register = on => {
               </Box>
             )
           })}
-          {sessions.length > SESSIONS_SHOWN && <Text dimColor>{`+${sessions.length - SESSIONS_SHOWN} more`}</Text>}
+          {sessions.length > sessionsShown && <Text dimColor>{`+${sessions.length - sessionsShown} more`}</Text>}
         </Box>
       </Box>
     )
@@ -3307,7 +3322,7 @@ export const register: Register = on => {
             {pose === 'sleeping' ? `asleep · ${formatAge(now - lastActiveAt)} idle` : POSE_LABEL[pose][0]}
           </Text>
         </Box>
-        <Box key="pet-main" flexDirection="column" flexShrink={1}>
+        <Box key="pet-main" flexDirection="column" flexShrink={1} flexGrow={1}>
           {(flashSlack !== undefined || slackConvos.length > 0) && (
             <Box key="pet-slack" flexDirection="row" alignItems="flex-start" gap={1} marginBottom={1}>
               <Box key="pet-slack-label" flexShrink={0}>
@@ -3324,7 +3339,7 @@ export const register: Register = on => {
                     <Button key="pet-slack-flash-done" plain label="✓" onPress={() => void dismissSlack($, flashSlack.channelId, slackTime(flashSlack))} />
                   </Box>
                 )}
-                {slackConvos.slice(0, SLACK_CONVOS_SHOWN).map(convo => {
+                {slackConvos.slice(0, isNarrow ? NARROW_SLACK_CONVOS_SHOWN : SLACK_CONVOS_SHOWN).map(convo => {
                   const latest = convo.waiting.at(-1)
                   return (
                     <Box key={`sc-${convo.channelId}`} flexDirection="row" alignItems="center" gap={1}>
@@ -3344,19 +3359,19 @@ export const register: Register = on => {
                 })}
                 {slackConvos.length > 0 && (
                   <Box key="pet-slack-foot" flexDirection="row" gap={1}>
-                    {slackConvos.length > SLACK_CONVOS_SHOWN && <Text dimColor>{`+${slackConvos.length - SLACK_CONVOS_SHOWN} more ·`}</Text>}
+                    {slackConvos.length > (isNarrow ? NARROW_SLACK_CONVOS_SHOWN : SLACK_CONVOS_SHOWN) && <Text dimColor>{`+${slackConvos.length - (isNarrow ? NARROW_SLACK_CONVOS_SHOWN : SLACK_CONVOS_SHOWN)} more ·`}</Text>}
                     <Button key="pet-slack-clear" plain dimColor label="clear all" onPress={() => void clearSlack($)} />
                   </Box>
                 )}
               </Box>
             </Box>
           )}
-          <Box key="pet-row" flexDirection="row" flexWrap="wrap" alignItems="flex-start">
+          <Box key="pet-row" flexDirection={isNarrow ? 'column' : 'row'} flexWrap="wrap" alignItems="flex-start">
             {queue}
             {status}
           </Box>
           {branch !== null && (
-            <Box key="pet-branch" flexDirection="row" gap={1} justifyContent="flex-end">
+            <Box key="pet-branch" flexDirection="row" flexWrap="wrap" columnGap={1} justifyContent={isNarrow ? 'flex-start' : 'flex-end'}>
               {branch.ticket !== null && <Text color="cyan" bold>{branch.ticket}</Text>}
               <Text dimColor wrap="truncate-middle">{clip(branch.name, 32)}</Text>
               {branch.changed > 0 && <Text color="yellow">{`${branch.changed} changed`}</Text>}
@@ -3366,12 +3381,15 @@ export const register: Register = on => {
               {branch.hasSlash && <Text color="yellow">{"'/' in name"}</Text>}
             </Box>
           )}
-          <Box key="pet-bottom" flexDirection="row" alignItems="center" columnGap={1}>
+          <Box key="pet-bottom" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={1}>
             {caret}
             {github.masterCi === 'failing' && <Text color="red" bold>master CI ✗</Text>}
             {cacheLine}
             {actionRow}
           </Box>
+        </Box>
+        <Box key="pet-close" flexShrink={0}>
+          <Button key="pet-close-button" plain dimColor role="dismiss" label="✕" onPress={() => void update($, hiddenAtom, () => true)} />
         </Box>
       </Box>
     )
