@@ -1,0 +1,235 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medium article: Claude Code mod</title>
+<style>
+:root{--bg:#fafaf8;--panel:#fff;--ink:#1b1b1f;--muted:#6b6b73;--line:#e4e3df;--accent:#2f7d5b;--soft:#e6f3ec;--code:#f1f1ee}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#151518;--panel:#1e1e22;--ink:#ececec;--muted:#9a9aa3;--line:#2c2c32;--accent:#6cc79a;--soft:#1f2f27;--code:#26262b}}
+:root[data-theme=dark]{--bg:#151518;--panel:#1e1e22;--ink:#ececec;--muted:#9a9aa3;--line:#2c2c32;--accent:#6cc79a;--soft:#1f2f27;--code:#26262b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:19px/1.65 Georgia,'Charter',serif;padding:28px 16px 64px}
+main{max-width:720px;margin:0 auto}
+.seo{font:15px/1.5 -apple-system,Inter,sans-serif;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:28px}
+.seo h2{font-size:15px;margin:0 0 10px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
+.seo dl{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;margin:0}.seo dt{color:var(--muted)}.seo dd{margin:0}
+.seo ol{margin:12px 0 0;padding-left:20px}
+article{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:32px 34px}
+h1{font:700 34px/1.2 -apple-system,Inter,sans-serif;margin:0 0 10px}h2{font:700 25px/1.3 -apple-system,Inter,sans-serif;margin:34px 0 10px}h3{font:700 19px/1.3 -apple-system,Inter,sans-serif;margin:24px 0 6px}
+p{margin:0 0 16px}ul{padding-left:24px}li{margin-bottom:6px}hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+figure{margin:22px 0}img{width:100%;border-radius:8px;border:1px solid var(--line);display:block}
+pre{background:var(--code);border-radius:8px;padding:14px 16px;overflow-x:auto;font:14px/1.5 ui-monospace,Menlo,monospace}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.85em;background:var(--code);padding:1px 5px;border-radius:4px}pre code{background:none;padding:0;font-size:inherit}
+a{color:var(--accent)}
+@media (max-width:480px){article{padding:20px 16px}.seo dl{grid-template-columns:1fr}h1{font-size:28px}}
+</style></head><body><main>
+<section class="seo"><h2>Medium settings, not part of the post</h2><dl>
+<dt>Title</dt><dd>How to Build a Claude Code Mod: A Complete Example (With a Pixel Pet)</dd>
+<dt>Subtitle</dt><dd>A working Claude Code mod in four files: a live band above the prompt, a slash command, and state that survives reloads. Plus the open-source mod I built on top of it.</dd>
+<dt>SEO title</dt><dd>Claude Code Mod Example: Build a Plugin in Four Files (53 chars)</dd>
+<dt>SEO description</dt><dd>A complete, tested Claude Code mod example in four files: an animated pixel pet above the prompt, a slash command, and an open-source status board. (147 chars)</dd>
+<dt>Tags (5 max)</dt><dd>Claude Code, Claude, AI Coding, Developer Tools, TypeScript</dd>
+<dt>Canonical link</dt><dd>leave empty: Medium is the original</dd></dl>
+<ol><li>Select everything inside the article box below, from the title down, and paste it into a new Medium story.</li>
+<li>Check that the four images came across; if one did not, upload it from <code>docs/images/</code> in the repo.</li>
+<li>In Story settings, set the SEO title, SEO description and tags above, then publish.</li></ol></section>
+<article>
+<h1>How to Build a Claude Code Mod: A Complete Example (With a Pixel Pet)</h1>
+<p><em>A working Claude Code mod in four files: a live band above the prompt, a slash command, and state that survives reloads. Plus the open-source mod I built on top of it.</em></p>
+<figure><img src="https://raw.githubusercontent.com/eranltd/pixel-pet/main/docs/images/app-demo.png" alt="A Claude Code session with a custom mod drawing a pixel dog, a sessions board and plan progress above the prompt"></figure>
+<p><em>A mock of a running Claude Code session with the pixel-pet mod. Every name and message is made up.</em></p>
+<hr>
+<p>If you searched for a Claude Code mod example and found mostly fragments, this is the full thing. By the end you will have a mod that draws an animated pixel cat above your prompt and adds a <code>/pet</code> command. It works in the terminal and in the desktop app.</p>
+<p>I'll also show what the same pattern grows into: <strong>Bit</strong>, a pixel puppy that runs a status board for every Claude Code session on my machine. It is open source at <a href="https://github.com/eranltd/pixel-pet">github.com/eranltd/pixel-pet</a>.</p>
+<h2>What is a Claude Code mod?</h2>
+<p>A Claude Code mod is a plugin with a <strong>hooks module</strong>: a TypeScript file that Claude Code loads into its own interface. It can draw UI above the prompt, open side panes, add slash commands, and react to what the session does: tool calls, prompts, turns starting and ending.</p>
+<p>Three things make it different from a script you run next to your editor:</p>
+<ul><li><strong>It runs inside Claude Code.</strong> The module lives in a sandbox with no DOM and no Node. Everything outside it goes through one object, <code>$</code>: <code>$.ui</code>, <code>$.state</code>, <code>$.clock</code>, <code>$.fs</code>, <code>$.process</code>.</li><li><strong>It draws with the engine's own elements.</strong> <code>Box</code>, <code>Text</code>, <code>Button</code>, and per surface <code>Raster</code> for the terminal or <code>Svg</code> for the desktop app.</li><li><strong>It is typed and validated.</strong> The engine writes the full API types into your mod folder, and <code>claude plugin validate</code> checks your module before it ever loads.</li></ul>
+<h2>The anatomy of a mod: four files</h2>
+<pre><code>my-pet/
+├── .claude-plugin/plugin.json   the manifest
+├── hooks/hooks.json             names the hooks module
+├── hooks/register.tsx           the module: hooks, drawing, commands
+└── types/index.d.ts             the state contract</code></pre>
+<h3>1. The manifest</h3>
+<p><code>.claude-plugin/plugin.json</code>:</p>
+<pre><code>{
+  &quot;name&quot;: &quot;my-pet&quot;,
+  &quot;version&quot;: &quot;0.1.0&quot;,
+  &quot;description&quot;: &quot;A pixel cat above the prompt&quot;,
+  &quot;types&quot;: &quot;./types/index.d.ts&quot;
+}</code></pre>
+<h3>2. The hooks entry</h3>
+<p><code>hooks/hooks.json</code>:</p>
+<pre><code>{ &quot;modules&quot;: [&quot;./register.tsx&quot;] }</code></pre>
+<h3>3. The state contract</h3>
+<p>Values a drawing reads belong in <code>$.state</code>, not in module variables. A reload runs your module again and resets its variables, but <code>$.state</code> is held by the host and survives. Every value is declared under the mod's name.</p>
+<p><code>types/index.d.ts</code>:</p>
+<pre><code>declare module &#x27;claude-code&#x27; {
+  interface PluginState {
+    &#x27;my-pet&#x27;: {
+      frame: number
+      isHidden: boolean
+    }
+  }
+}</code></pre>
+<p>Keep this file a plain declaration. An <code>export {}</code> at the end makes the validator miss the contract.</p>
+<h3>4. The hooks module</h3>
+<p><code>hooks/register.tsx</code> is the whole mod: a 12×8 pixel cat that flicks its tail, drawn as a <code>Raster</code> in the terminal and an animated <code>Svg</code> in the desktop app, plus a <code>/pet</code> command that hides it.</p>
+<pre><code>import { atom, read, update } from &#x27;claude-code&#x27;
+import type { Register } from &#x27;claude-code&#x27;
+
+// One letter per pixel; &#x27;.&#x27; is transparent. Two frames: the tail flicks.
+const FRAMES = [
+  [&#x27;..k.....k...&#x27;, &#x27;.kkkkkkkkk..&#x27;, &#x27;.kwkkkkkwk..&#x27;, &#x27;.kkkkpkkkk..&#x27;, &#x27;..kkkkkkkk.k&#x27;, &#x27;..kkkkkkkkk.&#x27;, &#x27;..k.k..k.k..&#x27;, &#x27;............&#x27;],
+  [&#x27;..k.....k...&#x27;, &#x27;.kkkkkkkkk..&#x27;, &#x27;.kwkkkkkwk..&#x27;, &#x27;.kkkkpkkkk..&#x27;, &#x27;..kkkkkkkk..&#x27;, &#x27;..kkkkkkkkkk&#x27;, &#x27;..k.k..k.k..&#x27;, &#x27;............&#x27;],
+]
+const WIDTH = 12
+const HEIGHT = 8
+const PALETTE: Record&lt;string, number&gt; = { k: 0x3b3b3b, w: 0x9be36d, p: 0xff9eb5 }
+const TERMINAL_DEFAULT = 0x01000000
+const TICK_MS = 500
+const PIXEL_PX = 4
+
+const frameAtom = atom({ plugin: &#x27;my-pet&#x27;, key: &#x27;frame&#x27; } as const, 0)
+const hiddenAtom = atom({ plugin: &#x27;my-pet&#x27;, key: &#x27;isHidden&#x27; } as const, false)
+
+function toBase64(bytes: Uint8Array): string {
+  const alphabet = &#x27;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/&#x27;
+  let out = &#x27;&#x27;
+  for (let i = 0; i &lt; bytes.length; i += 3) {
+    const a = bytes[i] ?? 0
+    const b = bytes[i + 1] ?? 0
+    const c = bytes[i + 2] ?? 0
+    const n = (a &lt;&lt; 16) | (b &lt;&lt; 8) | c
+    out += alphabet[(n &gt;&gt; 18) &amp; 63]! + alphabet[(n &gt;&gt; 12) &amp; 63]!
+    out += i + 1 &lt; bytes.length ? alphabet[(n &gt;&gt; 6) &amp; 63]! : &#x27;=&#x27;
+    out += i + 2 &lt; bytes.length ? alphabet[n &amp; 63]! : &#x27;=&#x27;
+  }
+  return out
+}
+
+// Terminal: one Raster, each cell a half-block glyph so one text row holds two pixel rows.
+function toRasterCells(rows: readonly string[]): string {
+  const words = new Uint32Array(WIDTH * (HEIGHT / 2) * 3)
+  let i = 0
+  for (let y = 0; y &lt; HEIGHT; y += 2) {
+    for (let x = 0; x &lt; WIDTH; x += 1) {
+      const top = PALETTE[rows[y]?.[x] ?? &#x27;.&#x27;]
+      const bottom = PALETTE[rows[y + 1]?.[x] ?? &#x27;.&#x27;]
+      const [glyph, fg, bg] =
+        top === undefined &amp;&amp; bottom === undefined
+          ? [0x20, TERMINAL_DEFAULT, TERMINAL_DEFAULT]
+          : top === undefined
+            ? [0x2584, bottom ?? TERMINAL_DEFAULT, TERMINAL_DEFAULT]
+            : [0x2580, top, bottom ?? TERMINAL_DEFAULT]
+      words[i++] = glyph
+      words[i++] = fg
+      words[i++] = bg
+    }
+  }
+  return toBase64(new Uint8Array(words.buffer))
+}
+
+// Desktop: one SVG, a rect per pixel; SMIL flips the frames so no redraw is needed.
+function animatedSvg(): string {
+  const dur = `${(FRAMES.length * TICK_MS) / 1000}s`
+  const groups = FRAMES.map((rows, tick) =&gt; {
+    const rects = rows.flatMap((row, y) =&gt;
+      row.split(&#x27;&#x27;).flatMap((ch, x) =&gt; {
+        const color = PALETTE[ch]
+        return color === undefined ? [] : [`&lt;rect x=&quot;${x}&quot; y=&quot;${y}&quot; width=&quot;1&quot; height=&quot;1&quot; fill=&quot;#${color.toString(16).padStart(6, &#x27;0&#x27;)}&quot;/&gt;`]
+      }),
+    )
+    const start = tick / FRAMES.length
+    const end = (tick + 1) / FRAMES.length
+    const [values, keyTimes] = tick === 0 ? [&#x27;visible;hidden&#x27;, `0;${end}`] : [&#x27;hidden;visible;hidden&#x27;, `0;${start};${end}`]
+    return `&lt;g visibility=&quot;${tick === 0 ? &#x27;visible&#x27; : &#x27;hidden&#x27;}&quot;&gt;&lt;animate attributeName=&quot;visibility&quot; values=&quot;${values}&quot; keyTimes=&quot;${keyTimes}&quot; dur=&quot;${dur}&quot; repeatCount=&quot;indefinite&quot; calcMode=&quot;discrete&quot;/&gt;${rects.join(&#x27;&#x27;)}&lt;/g&gt;`
+  })
+  return `&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 ${WIDTH} ${HEIGHT}&quot; width=&quot;${WIDTH * PIXEL_PX}&quot; height=&quot;${HEIGHT * PIXEL_PX}&quot; shape-rendering=&quot;crispEdges&quot;&gt;${groups.join(&#x27;&#x27;)}&lt;/svg&gt;`
+}
+
+export const register: Register = on =&gt; {
+  on(&#x27;session.start&#x27;, async ($, e, next) =&gt; {
+    const started = await next(e)
+    await $.command.register({ name: &#x27;pet&#x27;, description: &#x27;Show or hide the pixel cat&#x27; })
+    // The terminal Raster redraws on each tick; the desktop SVG animates itself.
+    $.clock.every(TICK_MS, async () =&gt; {
+      await update($, frameAtom, frame =&gt; (frame + 1) % FRAMES.length)
+    })
+    return started
+  })
+
+  on(&#x27;command.run&#x27;, { command: &#x27;pet&#x27; }, async $ =&gt; {
+    const isHidden = await update($, hiddenAtom, hidden =&gt; !hidden)
+    return { text: isHidden ? &#x27;The cat went for a nap.&#x27; : &#x27;The cat is back.&#x27; }
+  })
+
+  on(&#x27;ui.render&#x27;, { component: &#x27;AbovePrompt&#x27; }, async ($, e, next) =&gt; {
+    if (e.props.hasSurvey || (await read($, hiddenAtom))) {
+      return next(e)
+    }
+    let pet
+    if (e.surface === &#x27;terminal&#x27;) {
+      const { Raster } = $.ui.resolve(e)
+      const frame = await read($, frameAtom)
+      pet = &lt;Raster key=&quot;pet&quot; columns={WIDTH} rows={HEIGHT / 2} cells={toRasterCells(FRAMES[frame] ?? FRAMES[0]!)} /&gt;
+    } else if (e.surface === &#x27;desktop&#x27;) {
+      const { Svg } = $.ui.resolve(e)
+      pet = &lt;Svg source={animatedSvg()} alt=&quot;a pixel cat&quot; width={WIDTH * PIXEL_PX} height={HEIGHT * PIXEL_PX} isInteractive /&gt;
+    } else {
+      return next(e)
+    }
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      &lt;Box flexDirection=&quot;row&quot; alignItems=&quot;center&quot; columnGap={2}&gt;
+        {pet}
+        &lt;Text color={e.props.isWorking ? &#x27;cyan&#x27; : &#x27;gray&#x27;}&gt;{e.props.isWorking ? &#x27;working…&#x27; : &#x27;ready&#x27;}&lt;/Text&gt;
+      &lt;/Box&gt;
+    )
+  })
+}</code></pre>
+<h2>How the Claude Code hooks API works</h2>
+<p><strong>Every hook has one shape.</strong> <code>on(event, matcher?, hook)</code> adds a hook, and the hook receives <code>($, e, next)</code>. <code>$</code> is the engine, <code>e</code> is the event's frozen input, and <code>next(e)</code> runs the plugins beneath and then Claude Code itself. Return without calling <code>next</code> and your hook answers for itself.</p>
+<p><strong>Drawing is a render hook.</strong> <code>ui.render</code> on <code>{ component: 'AbovePrompt' }</code> draws the band above the prompt. Return a tree to show it, or <code>next(e)</code> to show nothing. <code>e.props.bodyColumns</code> gives you the width, so a band can switch layouts on narrow windows.</p>
+<p><strong>Commands are two calls.</strong> Register the name with <code>$.command.register</code> in <code>session.start</code>, then answer it with a <code>command.run</code> hook that returns <code>{ text }</code>.</p>
+<p><strong>State redraws for you.</strong> <code>read($, atom)</code> inside a render hook subscribes the drawing. <code>update($, atom, fn)</code> from a timer or another hook redraws it.</p>
+<p><strong>Animation without redraws.</strong> On the desktop, the SVG uses SMIL animations to flip frames by itself. That matters more than it sounds: every redraw replaces the buttons under the pointer, so a tail that redraws the band steals your clicks.</p>
+<h2>Run, validate and test your mod</h2>
+<p>Run it from its folder for one session:</p>
+<pre><code>claude --plugin-dir ./my-pet</code></pre>
+<p>For sessions the desktop app starts, name the folder in the <code>env</code> block of <code>~/.claude/settings.json</code> as <code>CLAUDE_CODE_PLUGIN_DIRS</code>. A terminal session reloads the mod on every save. In the desktop app, type <code>/reload-plugins</code> at the prompt after an edit.</p>
+<p>Check it before you load it:</p>
+<pre><code>claude plugin validate ./my-pet</code></pre>
+<p>Test it. A test mounts a component and asserts on the tree it draws:</p>
+<pre><code>import { expect, mock, test } from &#x27;claude-code/testing&#x27;
+
+test(&#x27;the cat draws above the prompt&#x27;, async ($, on) =&gt; {
+  mock.clock(on, { now: 1_800_000_000_000 })
+  mock.store(on)
+  const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: { bodyRows: 20, offset: 0 }, view: {} } as never
+  const ui = await $.ui.mount({ plugin: &#x27;my-pet&#x27;, surface: &#x27;terminal&#x27;, component: &#x27;AbovePrompt&#x27;, props })
+  expect(await ui.find({ key: &#x27;pet&#x27; })).toBeDefined()
+  await ui.unmount()
+})</code></pre>
+<pre><code>claude plugin test ./my-pet</code></pre>
+<p>After the first load, the engine writes the API types into <code>.claude-plugin/types/</code>, with a <code>tsconfig.json</code> your mod can extend. From then on <code>tsc -p ./my-pet</code> type-checks it.</p>
+<h2>A real Claude Code mod example: Bit, the pixel puppy</h2>
+<p>The cat above is the skeleton. Here is what I grew it into.</p>
+<figure><img src="https://raw.githubusercontent.com/eranltd/pixel-pet/main/docs/images/sprite-poses.png" alt="Bit the pixel puppy in three moods: ready, working and passed"></figure>
+<p>Bit sits in the top-left corner of the band. He works while Claude works, hops when a task finishes, droops when a check fails, and sits up with <code>needs you</code> when a tool call waits on my permission. Around him the band shows:</p>
+<ul><li><strong>Sessions</strong>: every Claude Code session on my machine, the ones blocked on me first. Each session writes a small JSON snapshot every few seconds and reads the others back.</li><li><strong>The plan</strong>: phase dots, a progress bar, and the task list, filled by a hook that watches Claude write its task list.</li><li><strong>Slack</strong>: messages waiting for a reply, each with a tick to dismiss.</li><li><strong>The context line</strong>: cache age, context used, rate-limit budget, and a button to summarize and start fresh.</li><li><strong>Actions</strong>: one favorite button, with a pane behind it for the rest.</li></ul>
+<figure><img src="https://raw.githubusercontent.com/eranltd/pixel-pet/main/docs/images/band-demo.png" alt="The pixel-pet band up close: sessions board, plan progress bar and Slack inbox"></figure>
+<p>None of it is a separate app. It is one hooks module of a few thousand lines, built by describing what I wanted, in sentences, while using the tool. "Move the dog to the corner." "Make him smaller." "Why is there a gap next to Slack?" Each was a one-minute round trip.</p>
+<h2>Lessons from building a Claude Code plugin</h2>
+<ul><li><strong>There is no font size.</strong> <code>Text</code> takes color, dim, bold, italic, underline and strikethrough. Smaller means dim and compact.</li><li><strong>Keep action tables as data.</strong> The engine refuses a table of closures that receive <code>$</code>. Switch on an id in one named function instead.</li><li><strong>Links must be <code>https:</code>.</strong> The band refuses anything else.</li><li><strong>The desktop prompt does not pass mod commands through.</strong> Give every command a button too.</li><li><strong>Design for narrow windows.</strong> Read <code>bodyColumns</code> and trim rows, or the band grows tall enough to scroll.</li><li><strong>Ship a demo mode.</strong> Screenshots of a real session leak names. Bit's demo button fills the band with made-up data.</li></ul>
+<h2>Install the pixel-pet mod</h2>
+<p>At the prompt of a terminal Claude Code session:</p>
+<pre><code>/plugin install pixel-pet --marketplace eranltd/pixel-pet</code></pre>
+<p>Answer <code>y</code> to add the marketplace and choose the user scope. A mod installed from a terminal at the user scope loads in the desktop app too.</p>
+<p>The repository is its own marketplace: one file, <code>.claude-plugin/marketplace.json</code>, lists the mod. To share yours, add that file and push the folder to GitHub.</p>
+<h2>FAQ</h2>
+<p><strong>What is the difference between a Claude Code plugin and a mod?</strong> A mod is a plugin whose behavior lives in a hooks module, so it can change Claude Code's own interface: bands, panes, commands, and reactions to tool calls.</p>
+<p><strong>Can a Claude Code mod draw custom UI?</strong> Yes. A <code>ui.render</code> hook returns a tree of the engine's elements. The band above the prompt and side panes are the common places.</p>
+<p><strong>Does a mod work in the Claude Code desktop app?</strong> Yes. Draw for <code>e.surface === 'desktop'</code> with <code>Svg</code> and the standard elements, and for <code>terminal</code> with <code>Raster</code>. Install from a terminal at the user scope.</p>
+<p><strong>How do I debug a Claude Code mod?</strong> Run <code>claude plugin validate</code> first. While a folder hot-reloads, the transcript shows one dim line when a hook fails or a tree does not validate, and <code>claude --debug</code> logs every refusal.</p>
+<p><strong>How do I share a Claude Code mod?</strong> Add <code>.claude-plugin/marketplace.json</code> to the mod's folder, push it to GitHub, and share <code>/plugin install &lt;name&gt; --marketplace &lt;owner&gt;/&lt;repo&gt;</code>.</p>
+<hr>
+<p><em>The full source, the guide and the demo images are at <a href="https://github.com/eranltd/pixel-pet">github.com/eranltd/pixel-pet</a>. Start with the cat. Give it a tail that flicks.</em></p>
+</article></main></body></html>
