@@ -1823,10 +1823,27 @@ async function refreshOthers($: EngineInterface) {
 }
 
 const SESSIONS_SHOWN = 5
-// Below this many columns the band stacks its blocks and trims rows, so it fits a narrow window without scrolling.
-const NARROW_COLUMNS = 120
-const NARROW_SESSIONS_SHOWN = 3
-const NARROW_SLACK_CONVOS_SHOWN = 2
+// The band picks a layout from its width: wide shows everything, medium keeps Sessions and the plan side by side
+// with tighter columns and fewer rows, narrow stacks them. Each step trims rows so the band fits without scrolling.
+type BandLayout = 'wide' | 'medium' | 'narrow'
+const WIDE_COLUMNS = 120
+const MEDIUM_COLUMNS = 84
+const LAYOUT: Record<BandLayout, { sessions: number; slack: number; tasks: number; nameWidth: number; sessionsMin: number; planMin: number; planGap: number }> = {
+  wide: { sessions: SESSIONS_SHOWN, slack: SLACK_CONVOS_SHOWN, tasks: Infinity, nameWidth: 44, sessionsMin: 40, planMin: 30, planGap: 4 },
+  medium: { sessions: 4, slack: 2, tasks: 4, nameWidth: 30, sessionsMin: 30, planMin: 26, planGap: 2 },
+  narrow: { sessions: 3, slack: 2, tasks: 1, nameWidth: 30, sessionsMin: 0, planMin: 0, planGap: 0 },
+}
+
+const bandLayout = (columns: number): BandLayout => (columns >= WIDE_COLUMNS ? 'wide' : columns >= MEDIUM_COLUMNS ? 'medium' : 'narrow')
+
+// Up to `max` tasks around the open one: one done task before it for context, then what comes next.
+function visibleTasks(tasks: readonly PlanTask[], max: number): PlanTask[] {
+  if (tasks.length <= max) return [...tasks]
+  const open = tasks.findIndex(task => task.status === 'in_progress')
+  const anchor = open === -1 ? tasks.findIndex(task => task.status !== 'completed') : open
+  const start = Math.max(0, Math.min(anchor - (max > 1 ? 1 : 0), tasks.length - max))
+  return tasks.slice(start, start + max)
+}
 
 // The desktop app opens one of its sessions from this link; macOS `open` hands it over.
 // The app's id is the one it published to the session's process; a snapshot from an older Bit has none,
@@ -3059,7 +3076,9 @@ export const register: Register = on => {
         </Box>
       )
     }
-    const isNarrow = e.props.bodyColumns < NARROW_COLUMNS
+    const layout = bandLayout(e.props.bodyColumns)
+    const fit = LAYOUT[layout]
+    const isNarrow = layout === 'narrow'
     const mood = await read($, moodAtom)
     const plan = await read($, planAtom)
     const github = await read($, githubAtom)
@@ -3137,7 +3156,7 @@ export const register: Register = on => {
     const needy = others.filter(other => other.needsYou)
     // Sessions waiting on you first, then the running ones, then merged, then idle.
     const sessions = [...others].sort((a, b) => sessionRank(a) - sessionRank(b))
-    const sessionsShown = isNarrow ? NARROW_SESSIONS_SHOWN : SESSIONS_SHOWN
+    const sessionsShown = fit.sessions
 
     const favorite = actionById(await read($, favoriteAtom))
     const actionRow = (
@@ -3154,7 +3173,7 @@ export const register: Register = on => {
     )
 
     const status = (
-      <Box key="pet-status" flexDirection="column" marginLeft={isNarrow ? 0 : 4} marginTop={isNarrow ? 1 : 0} flexShrink={1} minWidth={30}>
+      <Box key="pet-status" flexDirection="column" marginLeft={fit.planGap} marginTop={isNarrow ? 1 : 0} flexShrink={1} minWidth={fit.planMin}>
         {mood.kind === 'happy' && mood.text !== '' && (
           <Text color="green" wrap="truncate-end">
             ✓ {mood.text}
@@ -3192,7 +3211,7 @@ export const register: Register = on => {
         </Box>
         {hasPlan && (
           <Box key="pet-tasks" flexDirection="column">
-            {plan.tasks.filter(task => !isNarrow || task.status === 'in_progress').map(task => (
+            {visibleTasks(plan.tasks, fit.tasks).map(task => (
               <Box key={`pt-${task.id}`} flexDirection="row" gap={1}>
                 {task.status === 'completed' ? (
                   <Text color="green">✔</Text>
@@ -3249,7 +3268,7 @@ export const register: Register = on => {
     )
 
     const queue = (
-      <Box key="pet-sessions" flexDirection="column" flexShrink={1} minWidth={isNarrow ? 0 : 40}>
+      <Box key="pet-sessions" flexDirection="column" flexShrink={1} minWidth={fit.sessionsMin}>
         <Box key="pet-sessions-label" flexDirection="row" gap={1}>
           <Text bold>Sessions</Text>
           <Text color={needy.length > 0 ? 'yellow' : 'gray'}>{String(sessions.length)}</Text>
@@ -3264,7 +3283,7 @@ export const register: Register = on => {
               <Box key={`ss-${other.sessionId}`} flexDirection="row" gap={1}>
                 <Text color={color}>{mark}</Text>
                 <Box key={`ss-name-${other.sessionId}`} flexShrink={0}>
-                  <Button key={`ss-open-${other.sessionId}`} plain label={clip(sessionName(other), 44)} onPress={() => void openSession($, other)} />
+                  <Button key={`ss-open-${other.sessionId}`} plain label={clip(sessionName(other), fit.nameWidth)} onPress={() => void openSession($, other)} />
                 </Box>
                 <Box key={`ss-state-${other.sessionId}`} flexShrink={0}>
                   <Text color={color} dimColor={color === 'gray'}>{text}</Text>
@@ -3339,7 +3358,7 @@ export const register: Register = on => {
                     <Button key="pet-slack-flash-done" plain label="✓" onPress={() => void dismissSlack($, flashSlack.channelId, slackTime(flashSlack))} />
                   </Box>
                 )}
-                {slackConvos.slice(0, isNarrow ? NARROW_SLACK_CONVOS_SHOWN : SLACK_CONVOS_SHOWN).map(convo => {
+                {slackConvos.slice(0, fit.slack).map(convo => {
                   const latest = convo.waiting.at(-1)
                   return (
                     <Box key={`sc-${convo.channelId}`} flexDirection="row" alignItems="center" gap={1}>
@@ -3359,14 +3378,14 @@ export const register: Register = on => {
                 })}
                 {slackConvos.length > 0 && (
                   <Box key="pet-slack-foot" flexDirection="row" gap={1}>
-                    {slackConvos.length > (isNarrow ? NARROW_SLACK_CONVOS_SHOWN : SLACK_CONVOS_SHOWN) && <Text dimColor>{`+${slackConvos.length - (isNarrow ? NARROW_SLACK_CONVOS_SHOWN : SLACK_CONVOS_SHOWN)} more ·`}</Text>}
+                    {slackConvos.length > fit.slack && <Text dimColor>{`+${slackConvos.length - fit.slack} more ·`}</Text>}
                     <Button key="pet-slack-clear" plain dimColor label="clear all" onPress={() => void clearSlack($)} />
                   </Box>
                 )}
               </Box>
             </Box>
           )}
-          <Box key="pet-row" flexDirection={isNarrow ? 'column' : 'row'} flexWrap="wrap" alignItems="flex-start">
+          <Box key="pet-row" flexDirection={isNarrow ? 'column' : 'row'} flexWrap={layout === 'wide' ? 'wrap' : 'nowrap'} alignItems="flex-start">
             {queue}
             {status}
           </Box>

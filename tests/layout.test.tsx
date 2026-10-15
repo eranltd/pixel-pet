@@ -11,9 +11,9 @@ const PROPS = {
 
 const NOW = 1_800_000_000_000
 
-const NARROW = { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 90, scroll: { bodyRows: 30, offset: 0 }, view: {} } as never
+const at = (bodyColumns: number) => ({ hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns, scroll: { bodyRows: 30, offset: 0 }, view: {} }) as never
 
-test('a narrow band trims sessions and tasks; the close button hides it for this session and the paw brings it back', async ($, on) => {
+test('the band keeps two columns at medium width and stacks when narrow; the close button hides it for this session and the paw brings it back', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on)
   mock.env(on, { HOME: '/home/tester' })
@@ -41,10 +41,23 @@ test('a narrow band trims sessions and tasks; the close button hides it for this
 
   await $.command.run({ command: 'bit', args: 'demo' })
   await clock.advance(0)
-  const narrow = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: NARROW })
+  const rowDirection = async (ui: { find: (q: object) => Promise<unknown> }) => (JSON.parse(JSON.stringify(await ui.find({ key: 'pet-row' }))) as { props: { flexDirection: string } }).props.flexDirection
+
+  // Medium: Sessions and the plan stay side by side, with four sessions and a window of four tasks.
+  const medium = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: at(100) })
+  expect(await rowDirection(medium)).toBe('row')
+  expect(await medium.find({ text: /^\+3 more$/ })).toBeDefined()
+  expect(await medium.find({ text: /^Writing the hooks module$/ })).toBeDefined()
+  expect(await medium.find({ text: /^Design the pane layout$/ })).toBeDefined()
+  expect(await medium.find({ text: /^Read the mod API types$/ })).toBeUndefined()
+  await medium.unmount()
+
+  // Narrow: the blocks stack, with three sessions and only the open task.
+  const narrow = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: at(70) })
+  expect(await rowDirection(narrow)).toBe('column')
   expect(await narrow.find({ text: /^\+4 more$/ })).toBeDefined()
   expect(await narrow.find({ text: /^Writing the hooks module$/ })).toBeDefined()
-  expect(await narrow.find({ text: /^Read the mod API types$/ })).toBeUndefined()
+  expect(await narrow.find({ text: /^Design the pane layout$/ })).toBeUndefined()
   await narrow.unmount()
 
   const wide = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
