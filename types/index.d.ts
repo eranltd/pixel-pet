@@ -218,6 +218,7 @@ declare module 'claude-code' {
       frame: number
       isHidden: boolean
       isCollapsed: boolean
+      sessionsOffset: number
       favoriteAction: string
       needsAttention: boolean
       lastActiveAt: number

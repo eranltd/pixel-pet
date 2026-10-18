@@ -119,3 +119,59 @@ test('the goal skips the system-reminder the host prepends to a prompt', async (
   expect(await ui.find({ text: /system-reminder/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('the Sessions list scrolls: the buttons page it and the wheel moves it a row while the band fits', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.store(on)
+  mock.env(on, { HOME: '/home/tester' })
+  const dir = '/home/tester/.claude/plan-progress/sessions'
+  const snapshots: Record<string, string> = {}
+  for (let i = 0; i < 8; i++) {
+    snapshots[`s${i}.json`] = JSON.stringify({ sessionId: `s${i}`, project: `p${i}`, goal: null, phase: null, done: 0, total: 0, startedAt: NOW - i, endedAt: null, updatedAt: NOW, isRunning: false, needsYou: null })
+  }
+  on('fs.exists', (_$, e) => ({ value: e.path === dir }))
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.list', (_$, e) => ({
+    value: e.path === dir ? Object.keys(snapshots).map(name => ({ name, kind: 'file' as const, size: 100, mtimeMs: NOW, isLink: false })) : [],
+  }))
+  on('fs.read', (_$, e) => ({ value: snapshots[String(e.path).split('/').at(-1) ?? ''] ?? '' }))
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: 'no process in tests', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.open', () => ({ value: { isPlaced: false } }))
+  const engineMoves: number[] = []
+  on('ui.scroll', (_$, e) => {
+    engineMoves.push(e.by)
+    return {}
+  })
+  await $.command.run({ command: 'plan-progress', args: 'all' })
+  await clock.advance(0)
+  const ui = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  const shown = async () => ((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => key?.startsWith('ss-open-')))
+  const wheel = (by: number, contentRows = 20) =>
+    $.ui.scroll({ component: 'AbovePrompt', requestId: 'band', offset: 0, by, bodyRows: 30, contentRows, origin: { kind: 'person' } } as never)
+
+  expect(await shown()).toEqual(['ss-open-s0', 'ss-open-s1', 'ss-open-s2', 'ss-open-s3', 'ss-open-s4'])
+  expect(await ui.find({ text: /^▼ 3 more$/ })).toBeDefined()
+  expect(await ui.find({ key: 'pet-sessions-up' })).toBeUndefined()
+
+  // A page down stops at the last full window.
+  await ui.press({ key: 'pet-sessions-down' })
+  expect(await shown()).toEqual(['ss-open-s3', 'ss-open-s4', 'ss-open-s5', 'ss-open-s6', 'ss-open-s7'])
+  expect(await ui.find({ text: /^▲ 3 above$/ })).toBeDefined()
+  expect(await ui.find({ key: 'pet-sessions-down' })).toBeUndefined()
+
+  // The wheel moves one row a tick and keeps the window off the engine's.
+  expect(await wheel(-1)).toEqual({})
+  expect(await shown()).toEqual(['ss-open-s2', 'ss-open-s3', 'ss-open-s4', 'ss-open-s5', 'ss-open-s6'])
+  expect(await ui.find({ text: /^▲ 2 above$/ })).toBeDefined()
+  expect(await ui.find({ text: /^▼ 1 more$/ })).toBeDefined()
+
+  // A band taller than its room scrolls as the engine's; the list stays.
+  expect(engineMoves).toEqual([])
+  await wheel(-1, 40)
+  expect(engineMoves).toEqual([-1])
+  expect(await shown()).toEqual(['ss-open-s2', 'ss-open-s3', 'ss-open-s4', 'ss-open-s5', 'ss-open-s6'])
+
+  await ui.press({ key: 'pet-sessions-up' })
+  expect(await shown()).toEqual(['ss-open-s0', 'ss-open-s1', 'ss-open-s2', 'ss-open-s3', 'ss-open-s4'])
+  await ui.unmount()
+})

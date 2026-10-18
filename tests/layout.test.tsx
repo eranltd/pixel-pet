@@ -46,7 +46,7 @@ test('the band keeps two columns at medium width and stacks when narrow; the clo
   // Medium: Sessions and the plan stay side by side, with four sessions and a window of four tasks.
   const medium = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: at(100) })
   expect(await rowDirection(medium)).toBe('row')
-  expect(await medium.find({ text: /^\+3 more$/ })).toBeDefined()
+  expect(await medium.find({ text: /^▼ 3 more$/ })).toBeDefined()
   expect(await medium.find({ text: /^Writing the hooks module$/ })).toBeDefined()
   expect(await medium.find({ text: /^Design the pane layout$/ })).toBeDefined()
   expect(await medium.find({ text: /^Read the mod API types$/ })).toBeUndefined()
@@ -55,13 +55,13 @@ test('the band keeps two columns at medium width and stacks when narrow; the clo
   // Narrow: the blocks stack, with three sessions and only the open task.
   const narrow = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: at(70) })
   expect(await rowDirection(narrow)).toBe('column')
-  expect(await narrow.find({ text: /^\+4 more$/ })).toBeDefined()
+  expect(await narrow.find({ text: /^▼ 4 more$/ })).toBeDefined()
   expect(await narrow.find({ text: /^Writing the hooks module$/ })).toBeDefined()
   expect(await narrow.find({ text: /^Design the pane layout$/ })).toBeUndefined()
   await narrow.unmount()
 
   const wide = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
-  expect(await wide.find({ text: /^\+2 more$/ })).toBeDefined()
+  expect(await wide.find({ text: /^▼ 2 more$/ })).toBeDefined()
   expect(await wide.find({ text: /^Read the mod API types$/ })).toBeDefined()
   await wide.press({ key: 'pet-close-button' })
   expect(await wide.find({ key: 'pet-main' })).toBeUndefined()

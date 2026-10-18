@@ -168,6 +168,7 @@ const moodAtom = atom({ plugin: 'pixel-pet', key: 'mood' } as const, CALM)
 const frameAtom = atom({ plugin: 'pixel-pet', key: 'frame' } as const, 0)
 const hiddenAtom = atom({ plugin: 'pixel-pet', key: 'isHidden' } as const, false)
 const collapsedAtom = atom({ plugin: 'pixel-pet', key: 'isCollapsed' } as const, false)
+const sessionsOffsetAtom = atom({ plugin: 'pixel-pet', key: 'sessionsOffset' } as const, 0)
 const attentionAtom = atom({ plugin: 'pixel-pet', key: 'needsAttention' } as const, false)
 const lastActiveAtom = atom({ plugin: 'pixel-pet', key: 'lastActiveAt' } as const, 0)
 const SLEEP_AFTER_MS = 15 * 60_000
@@ -758,6 +759,16 @@ async function refreshGitHub($: EngineInterface): Promise<string> {
 async function toggleCollapsed($: EngineInterface) {
   const isCollapsed = await update($, collapsedAtom, collapsed => !collapsed)
   await $.store.set('isCollapsed', isCollapsed)
+}
+
+async function scrollSessions($: EngineInterface, by: number) {
+  const last = Math.max(0, local.sessionsTotal - local.sessionsShown)
+  // The list can shrink under a stored offset, so clamp before moving.
+  const offset = Math.min(await read($, sessionsOffsetAtom), last)
+  const moved = Math.min(last, Math.max(0, offset + by))
+  if (moved !== (await read($, sessionsOffsetAtom))) {
+    await update($, sessionsOffsetAtom, () => moved)
+  }
 }
 
 async function refreshAll($: EngineInterface) {
@@ -1616,6 +1627,9 @@ const local = {
   // /bit demo: the band draws made-up data for screenshots; pollers leave the demo values alone.
   isDemo: false,
   needsYou: null as string | null,
+  // The Sessions list as the band last drew it, so the wheel knows how far it may scroll; zero while it is not drawn.
+  sessionsTotal: 0,
+  sessionsShown: 0,
 }
 
 async function locateHostRecord($: EngineInterface) {
@@ -3063,7 +3077,17 @@ export const register: Register = on => {
     )
   })
 
+  // While the band fits, the wheel over it scrolls the Sessions list; a band taller than its room scrolls as the engine's.
+  on('ui.scroll', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.origin.kind !== 'person' || e.contentRows > e.bodyRows || local.sessionsTotal <= local.sessionsShown) {
+      return next(e)
+    }
+    await scrollSessions($, e.by)
+    return {}
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    local.sessionsTotal = 0
     if (e.props.hasSurvey) {
       return next(e)
     }
@@ -3157,6 +3181,8 @@ export const register: Register = on => {
     // Sessions waiting on you first, then the running ones, then merged, then idle.
     const sessions = [...others].sort((a, b) => sessionRank(a) - sessionRank(b))
     const sessionsShown = fit.sessions
+    const sessionsOffset = Math.min(await read($, sessionsOffsetAtom), Math.max(0, sessions.length - sessionsShown))
+    const sessionsBelow = Math.max(0, sessions.length - sessionsOffset - sessionsShown)
 
     const favorite = actionById(await read($, favoriteAtom))
     const actionRow = (
@@ -3276,7 +3302,7 @@ export const register: Register = on => {
         </Box>
         <Box key="pet-sessions-rows" flexDirection="column" flexShrink={1}>
           {sessions.length === 0 && <Text dimColor>no other sessions</Text>}
-          {sessions.slice(0, sessionsShown).map(other => {
+          {sessions.slice(sessionsOffset, sessionsOffset + sessionsShown).map(other => {
             const [mark, text, color] = sessionState(other)
             const gist = sessionGist(other)
             return (
@@ -3297,7 +3323,16 @@ export const register: Register = on => {
               </Box>
             )
           })}
-          {sessions.length > sessionsShown && <Text dimColor>{`+${sessions.length - sessionsShown} more`}</Text>}
+          {sessions.length > sessionsShown && (
+            <Box key="pet-sessions-scroll" flexDirection="row" gap={2}>
+              {sessionsOffset > 0 && (
+                <Button key="pet-sessions-up" plain dimColor label={`▲ ${sessionsOffset} above`} onPress={() => void scrollSessions($, -sessionsShown)} />
+              )}
+              {sessionsBelow > 0 && (
+                <Button key="pet-sessions-down" plain dimColor label={`▼ ${sessionsBelow} more`} onPress={() => void scrollSessions($, sessionsShown)} />
+              )}
+            </Box>
+          )}
         </Box>
       </Box>
     )
@@ -3333,6 +3368,8 @@ export const register: Register = on => {
         </Box>
       )
     }
+    local.sessionsTotal = sessions.length
+    local.sessionsShown = sessionsShown
     return (
       <Box flexDirection="row" alignItems="flex-start" columnGap={2}>
         <Box key="pet-col" flexDirection="column" alignItems="center" flexShrink={0}>
