@@ -6,5 +6,33 @@
     "name": "Eran Peled",
     "email": "26306982+eranltd@users.noreply.github.com"
   },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "extraBots": {
+      "type": "string",
+      "multiple": true,
+      "title": "Extra bots",
+      "description": "GitHub logins to leave out of review counts, beside the common review and CI bots",
+      "default": []
+    },
+    "previewMarker": {
+      "type": "string",
+      "title": "Preview comment",
+      "description": "Text in the PR comment that carries the preview link; empty hides the preview link",
+      "default": ""
+    },
+    "previewLinkMatch": {
+      "type": "string",
+      "title": "Preview link match",
+      "description": "Text the preview link contains; empty takes the first https link in that comment",
+      "default": ""
+    },
+    "globalsFiles": {
+      "type": "string",
+      "multiple": true,
+      "title": "Globals files",
+      "description": "Repo files with a GLOBALS=(...) list of paths whose change rebuilds every app",
+      "default": []
+    }
+  }
 }

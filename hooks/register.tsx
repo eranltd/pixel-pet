@@ -518,7 +518,18 @@ const squadAtom = atom({ plugin: 'pixel-pet', key: 'squad' } as const, [] as str
 const worktreesAtom = atom({ plugin: 'pixel-pet', key: 'worktrees' } as const, null as WorktreeScan | null)
 const scanningAtom = atom({ plugin: 'pixel-pet', key: 'isScanningWorktrees' } as const, false)
 
-const BOTS = /^(coderabbitai|cursor|copilot|github-actions|sonarqubecloud|grdops|dependabot)|\[bot\]$/i
+// The plugin's options: the bots, preview comment and build rules of the repos you work in. Empty turns each off.
+const config = {
+  extraBots: [] as string[],
+  previewMarker: '',
+  previewLinkMatch: '',
+  globalsFiles: [] as string[],
+}
+
+const stringList = (value: unknown) => (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string' && one !== '') : [])
+
+const BOTS = /^(coderabbitai|cursor|copilot|github-actions|sonarqubecloud|dependabot)|\[bot\]$/i
+const isBot = (login: string) => BOTS.test(login) || config.extraBots.includes(login.toLowerCase())
 const FAN_OUT = 4
 const DAY_MS = 24 * 3_600_000
 const STALE_REVIEW_MS = 14 * DAY_MS
@@ -528,7 +539,6 @@ const WIN_SHOW_MS = 60 * 60_000
 const CODERABBIT_MS = 15 * 60_000
 const PUSH_WATCH_MS = 45 * 60_000
 const WORKTREE_PANE = 'bit-worktrees'
-const GLOBALS_FILES = ['.buildkite/scripts/clients_affected.sh', '.buildkite/scripts/webpages_affected.sh']
 
 const ciOf = (state: string | undefined): CiState =>
   state === 'SUCCESS' ? 'passing' : state === 'FAILURE' || state === 'ERROR' ? 'failing' : state === undefined ? 'none' : 'running'
@@ -582,7 +592,7 @@ async function startCockpit($: EngineInterface) {
 
   const root = await $.session.root()
   const globals = new Set<string>()
-  for (const file of GLOBALS_FILES) {
+  for (const file of config.globalsFiles) {
     const path = `${root}/${file}`
     if (!(await $.fs.exists(path))) continue
     const block = /GLOBALS=\(([\s\S]*?)\)/.exec(String(await $.fs.read(path)))?.[1] ?? ''
@@ -623,8 +633,8 @@ async function fetchCurrent($: EngineInterface): Promise<{ masterCi: CiState; cu
   try {
     const repo = (JSON.parse(ran.stdout) as { data: GraphCurrent }).data.repository
     const pr = repo?.pullRequests.nodes[0]
-    const published = pr?.comments.nodes.findLast(comment => comment.body.includes('Variant Published'))
-    const previewUrl = safeUrl(/https:\/\/[^\s)\]"'<>]*fname=[^\s)\]"'<>]*/.exec(published?.body ?? '')?.[0])
+    const published = config.previewMarker === '' ? undefined : pr?.comments.nodes.findLast(comment => comment.body.includes(config.previewMarker))
+    const previewUrl = safeUrl(published?.body.match(/https:\/\/[^\s)\]"'<>]+/g)?.find(url => url.includes(config.previewLinkMatch)))
     return {
       masterCi: ciOf(repo?.defaultBranchRef?.target.statusCheckRollup?.state),
       current:
@@ -633,7 +643,7 @@ async function fetchCurrent($: EngineInterface): Promise<{ masterCi: CiState; cu
           : {
               key: `${pr.repository.name}#${pr.number}`,
               url: pr.url,
-              approvals: pr.latestReviews.nodes.filter(review => review.state === 'APPROVED' && !BOTS.test(review.author?.login ?? '')).length,
+              approvals: pr.latestReviews.nodes.filter(review => review.state === 'APPROVED' && !isBot(review.author?.login ?? '')).length,
               previewUrl,
               isMerged: pr.state === 'MERGED',
             },
@@ -854,10 +864,10 @@ function watchImpact($: EngineInterface, win: Win) {
 }
 
 const SLACK_UPDATE_PROMPT =
-  'Write a Slack update about what we did in this session: what changed, why, and what is next, with PR and ticket links. Use the slack-growth-update skill for the voice and the channel. Put it in Slack as a draft for me to send; do not send it.'
+  'Write a Slack update about what we did in this session: what changed, why, and what is next, with PR and ticket links. Use my Slack update skill for the voice and the channel, if I have one. Put it in Slack as a draft for me to send; do not send it.'
 
 const TICKET_PROMPT =
-  'Draft a Linear ticket for the work in this session, following the ticket-writing skill. Show me the draft first; create nothing until I say so.'
+  'Draft a Linear ticket for the work in this session, following my ticket conventions. Show me the draft first; create nothing until I say so.'
 
 // One-click skill runs: each button sends its prompt as if typed, so the skill's own rules and confirmations apply.
 const SKILL_PROMPTS = {
@@ -885,7 +895,7 @@ async function switchModel($: EngineInterface) {
 }
 
 async function shipWithDone($: EngineInterface) {
-  if (await confirm($, 'Ship this work with /done? It commits, pushes and opens a draft PR.', 'Ship')) {
+  if (await confirm($, 'Ship this work? It commits, pushes and opens a draft PR.', 'Ship')) {
     void $.prompt.submit({ text: 'Ship this work: commit it, push the branch and open a draft PR.', asUser: true })
   }
 }
@@ -909,7 +919,7 @@ const direct = (id: string, label: string, hint: string): Action => ({ id, label
 const ACTIONS: readonly Action[] = [
   prompted('eli5', 'ELI5', 'explain the topic simply', ELI5_PROMPT),
   prompted('slack', 'slack', 'draft a Slack update', SLACK_UPDATE_PROMPT),
-  direct('done', 'done', 'ship with /done'),
+  direct('done', 'done', 'commit, push, open a PR'),
   prompted('ticket', 'ticket', 'draft a Linear ticket', TICKET_PROMPT),
   prompted('check', 'check', 'lint and type checks', SKILL_PROMPTS.check),
   prompted('screens', 'screens', 'PR before/after shots', SKILL_PROMPTS.screens),
@@ -991,10 +1001,10 @@ function classifyFailure(output: string, masterCi: CiState): FailureCause | null
     return { label: 'core.bare=true breaks this worktree', fix: 'git config --local core.bare false' }
   }
   if (/ERR_PNPM|node_modules\/\.pnpm|Cannot find module|command not found: (vitest|tsc|eslint)/i.test(output)) {
-    return { label: 'stale pnpm install', fix: 'cd clients && CI=true pnpm install --frozen-lockfile' }
+    return { label: 'stale pnpm install', fix: 'CI=true pnpm install --frozen-lockfile' }
   }
   if (/ruff/i.test(output) && /(unknown|invalid|deprecated|removed)[^\n]*(rule|setting|option)|ruff[^\n]*version/i.test(output)) {
-    return { label: 'ruff version drift', fix: 'cd services3 && uv sync --frozen' }
+    return { label: 'ruff version drift', fix: 'uv sync --frozen' }
   }
   if (/\[rejected\]|non-fast-forward|fetch first/i.test(output)) {
     return { label: 'the remote branch moved', fix: 'git pull --rebase' }
@@ -1936,8 +1946,8 @@ const DEMO_SCRIPT: readonly { phase: PlanPhase; done: number }[] = [
 ]
 
 const DEMO_OTHERS = [
-  { sessionId: 'demo-a', project: 'clients', goal: 'Move the activation zone to Vite', phase: 'testing', total: 6, isRunning: true, from: 3 },
-  { sessionId: 'demo-b', project: 'services3', goal: 'Fix the OTP retry loop', phase: 'building', total: 4, isRunning: false, from: 1 },
+  { sessionId: 'demo-a', project: 'web', goal: 'Move the checkout page to Vite', phase: 'testing', total: 6, isRunning: true, from: 3 },
+  { sessionId: 'demo-b', project: 'api', goal: 'Fix the OTP retry loop', phase: 'building', total: 4, isRunning: false, from: 1 },
 ] as const
 
 async function writeDemoOthers($: EngineInterface, step: number, isOver: boolean) {
@@ -2702,7 +2712,11 @@ async function completeCritique($: EngineInterface, e: TurnCompleteInput) {
   }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  config.extraBots = stringList(options.extraBots).map(login => login.toLowerCase())
+  config.previewMarker = typeof options.previewMarker === 'string' ? options.previewMarker : ''
+  config.previewLinkMatch = typeof options.previewLinkMatch === 'string' ? options.previewLinkMatch : ''
+  config.globalsFiles = stringList(options.globalsFiles)
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     local.sessionId = await $.session.id()
@@ -3269,7 +3283,7 @@ export const register: Register = on => {
           <Box key="pet-hygiene" flexDirection="row" gap={1}>
             {github.current?.previewUrl && <Link href={github.current.previewUrl} label="preview" />}
             {branch.globals.length > 0 && (
-              <Text color="yellow" wrap="truncate-end">{`${branch.globals[0]} changed: no preview, every app re-promotes`}</Text>
+              <Text color="yellow" wrap="truncate-end">{`${branch.globals[0]} changed: every app rebuilds and redeploys`}</Text>
             )}
           </Box>
         )}

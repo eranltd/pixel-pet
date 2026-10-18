@@ -52,6 +52,30 @@ Or name it for every session, including the ones the desktop app starts, in the 
 
 A terminal session watches the folder and reloads the mod on every save. A desktop session loads it at start and again whenever you type `/reload-plugins` at the prompt, so an edit shows after one reload.
 
+### Options
+
+Four options fit the band to your repos. Each one is off until you set it, in `/config` or under `pluginConfigs` in `~/.claude/settings.json`:
+
+```json
+{
+  "pluginConfigs": {
+    "pixel-pet": {
+      "options": {
+        "extraBots": ["deploy-bot"],
+        "previewMarker": "Preview ready",
+        "previewLinkMatch": "preview.example.com",
+        "globalsFiles": ["ci/globals.sh"]
+      }
+    }
+  }
+}
+```
+
+- `extraBots`: more GitHub logins that review counts skip, beside the common review and CI bots.
+- `previewMarker`: text in the PR comment that carries your preview link. The band shows that link as `preview`.
+- `previewLinkMatch`: text the preview link contains, when that comment holds more than one link.
+- `globalsFiles`: repo files with a `GLOBALS=(...)` list of paths. When your branch changes one of those paths, the band warns that every app rebuilds.
+
 ### Bit's moods
 
 ![Bit ready, working and passed](docs/images/sprite-poses.png)
