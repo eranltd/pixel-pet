@@ -45,6 +45,8 @@ export type PlanSnapshot = {
   pr?: SessionPr | null
   // The title the desktop app shows for the session; a snapshot from an older Bit has none.
   title?: string | null
+  // When the session was opened; a snapshot from an older Bit has none.
+  openedAt?: number | null
 }
 
 export type SessionPr = {
@@ -211,6 +213,94 @@ export type SlackView = {
   error: string | null
 }
 
+export type BitLayout = 'band' | 'side-pane'
+
+// A lane is drawn as steps; `lane` is the step in progress, the step count once every step is done.
+export type TicketPr = {
+  key: string
+  number: number
+  url: string
+  title: string
+  state: 'open' | 'draft' | 'merged'
+  ci: CiState
+  failing: string[]
+  review: string
+  isConfig: boolean
+  lane: number
+}
+
+export type TicketVariant = {
+  label: string
+  url: string | null
+  share: string
+}
+
+export type TicketExperiment = {
+  name: string
+  title: string
+  url: string | null
+  lane: number
+  variants: TicketVariant[]
+}
+
+export type TicketDraft = {
+  code: string
+  config: string
+  url: string | null
+  hoursLeft: number
+  change: string
+}
+
+export type TicketLinkKind = 'figma' | 'notion' | 'claude'
+
+export type TicketLink = {
+  kind: TicketLinkKind
+  label: string
+  url: string
+}
+
+export type TicketRelated = {
+  id: string
+  title: string
+  url: string | null
+}
+
+export type TicketPerson = {
+  name: string
+  role: string
+  url: string | null
+}
+
+export type TicketView = {
+  id: string
+  title: string
+  url: string | null
+  next: string
+  tldr: string | null
+  drafts: TicketDraft[]
+  prs: TicketPr[]
+  codeLane: number | null
+  experiments: TicketExperiment[]
+  links: TicketLink[]
+  related: TicketRelated[]
+  people: TicketPerson[]
+  errors: string[]
+  isCiRunning: boolean
+  loadedAt: number
+}
+
+export type ContextPart = {
+  tokens: number
+  color: string
+}
+
+export type ContextView = {
+  tokens: number
+  window: number
+  percent: number
+  parts: ContextPart[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'pixel-pet': {
@@ -248,6 +338,11 @@ declare module 'claude-code' {
       critiqueModel: CritiqueModel
       sentFixes: number[]
       background: BackgroundTask[]
+      ticket: Shaped<TicketView | null>
+      contextView: ContextView | null
+      sessionTldr: string | null
+      collapsedSections: Record<string, boolean>
+      isKeepingWarm: boolean
     }
   }
 }

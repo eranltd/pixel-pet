@@ -1,7 +1,7 @@
 {
   "name": "pixel-pet",
-  "version": "0.8.0",
-  "description": "Bit the pixel puppy: sessions board (waiting, running, merged, idle), merge-ready lane, push guard and failure classifier, CI why, preview chip, Slack inbox with per-message dismiss, needs-you inbox, usage projection, hygiene guards, actions pane with a favorite, /bit rituals, worktree janitor, merge impact watch; plus plan progress, cache line with Summarize, start fresh, critique, ELI5",
+  "version": "0.9.0",
+  "description": "Bit the pixel puppy, in two layouts. Side pane: the session's ticket beside the chat (TL;DR, PRs, experiments, config drafts, links, people) over Slack, Code Review, Sessions and context, every section foldable. Band: sessions board (waiting, running, merged, idle), merge-ready lane, push guard and failure classifier, CI why, preview chip, Slack inbox with per-message dismiss, needs-you inbox, usage projection, hygiene guards, actions pane with a favorite, /bit rituals, worktree janitor, merge impact watch; plus plan progress, cache line with Summarize, start fresh, critique, ELI5",
   "author": {
     "name": "Eran Peled",
     "email": "26306982+eranltd@users.noreply.github.com"
@@ -33,6 +33,70 @@
       "title": "Globals files",
       "description": "Repo files with a GLOBALS=(...) list of paths whose change rebuilds every app",
       "default": []
+    },
+    "layout": {
+      "type": "string",
+      "title": "Layout",
+      "description": "band: Bit above the prompt. side-pane: Bit in a pane beside the chat, with the session's ticket, Sessions, Slack and context",
+      "options": [
+        "band",
+        "side-pane"
+      ],
+      "default": "band"
+    },
+    "codeRepo": {
+      "type": "string",
+      "title": "Code repo",
+      "description": "side-pane: owner/name of the repo whose PRs make the Code lane; its owner is the org PR search covers",
+      "default": ""
+    },
+    "configRepo": {
+      "type": "string",
+      "title": "Config repo",
+      "description": "side-pane: owner/name of the repo whose PRs make the Config lane; empty leaves the lane out",
+      "default": ""
+    },
+    "linearServer": {
+      "type": "string",
+      "title": "Linear server",
+      "description": "side-pane: the MCP server to read tickets from, as /mcp lists it; empty finds the one with get_issue",
+      "default": ""
+    },
+    "slackDomain": {
+      "type": "string",
+      "title": "Slack domain",
+      "description": "side-pane: your workspace domain (acme.slack.com), for DM links to the people on the ticket",
+      "default": ""
+    },
+    "designer": {
+      "type": "string",
+      "title": "Designer",
+      "description": "side-pane: the designer's full Slack name, listed under People as design",
+      "default": ""
+    },
+    "experimentType": {
+      "type": "string",
+      "title": "Experiment config type",
+      "description": "side-pane: the config type of experiments (EXPERIMENT_V3); empty hides experiments and drafts",
+      "default": ""
+    },
+    "configCli": {
+      "type": "string",
+      "title": "Config CLI",
+      "description": "side-pane: a CLI with `config search` and `curl` subcommands that lists configs and loads drafts",
+      "default": ""
+    },
+    "draftPath": {
+      "type": "string",
+      "title": "Draft path",
+      "description": "side-pane: the API path that loads a config draft, with {code} for its code",
+      "default": ""
+    },
+    "variantQuery": {
+      "type": "string",
+      "title": "Variant query",
+      "description": "side-pane: the query that forces a variant, with {name}, {variant} and {zone} (exp={name}$${variant}&zone={zone})",
+      "default": ""
     }
   }
 }

@@ -2,6 +2,41 @@
 
 <p align="center"><img src="docs/images/bit-animated.svg" width="208" alt="Bit, an animated pixel puppy"></p>
 
+A Claude Code mod with two layouts. **The side pane** puts the session's ticket in a pane beside the chat, with your Slack, reviews, sessions and context under it. **The band** is the original: Bit, a 26×18 pixel dog, above the prompt, with the plan, the sessions and the inboxes around him.
+
+## The side pane
+
+<p align="center">
+  <img src="docs/images/side-pane-collapsed.png" width="400" alt="The side pane with every section collapsed: the TL;DR, then one headline per section, the PR lane on the Pull requests line, a separator, and Slack, Gmail, Code Review, Sessions and Context">
+  <img src="docs/images/side-pane-open.png" width="400" alt="The side pane with every section open: the ticket and its next step, an unsaved config draft, two PRs with their lanes, an experiment with its variants, Figma and Notion links, a related ticket, the people on it, then Slack messages, PRs waiting on review, sessions with their age, and the context bar">
+</p>
+
+<sub>Drawn from the pane's own tree with the demo on. Every name, ticket and message is made up. Left: every section collapsed. Right: every section open.</sub>
+
+Set one option to switch to it, `"layout": "side-pane"` (see [Side pane options](#side-pane-options)). The pane opens beside the chat in every new session, and reads the ticket from the branch name (`abc-123-new-checkout` is `ABC-123`) or else from the session title.
+
+- **TL;DR**: the first line, one sentence on what the session is doing and where it stands. Haiku writes it from the title, the ticket, the plan and the last few messages, at most once a minute.
+- **Ticket**: the Linear ticket, its own one-sentence TL;DR, and the next step in bold: `Fix CI on #412: lint`, `#412 waits for review`, `Launch exp_pane_1`, `All shipped`.
+- **Unsaved config drafts**: drafts saved in your config dashboard and not applied yet, with the hours they have left.
+- **Pull requests**: the ticket's PRs, with CI (the newest run of each check) and review. A lane track shows Build › Review › Merged.
+- **Experiment**: each experiment that names the ticket, its Draft › Live › Ended lane, and a link that forces each variant.
+- **Design**, **Docs**, **Related tickets**: the Figma, Notion and Claude links on the ticket and its PRs, and its linked tickets.
+- **People**: who wrote the ticket, who has it, and the designer, each a link to their Slack DM.
+
+Under the separator, what waits on you across sessions:
+
+- **Slack**: your DMs and mentions since your last reply. Each shows its latest message and the time it came; a long one scrolls past like a ticker. ✓ clears one, "clear all" clears them all.
+- **Gmail**: a headline for now.
+- **Code Review**: the PRs that ask for your review, and how long each has waited: green under a day, orange under three, red after.
+- **Sessions**: the other sessions on this machine, each with its age in days. Green runs or merged, orange waits on you, red idles.
+- **Context**: the context window used, as a number and a bar.
+
+Every section with rows folds from the caret beside its title, and Bit remembers it. Code Review and Sessions start folded. A section with nothing to show keeps its headline, faded. At the bottom, **Keep warm** sends one tiny request just before the prompt cache expires, so it stays warm, and **KISS** explains the topic with the [kiss](https://github.com/eranltd/kiss) skill.
+
+Claude can open the pane too: ask it to "open the session pane". Its `open_session_pane` tool refreshes the pane and returns what it shows as text; `demo: true` fills it with made-up data for screenshots. In a terminal, `/ticket` does the same.
+
+## The band
+
 ![A Claude Code session with the band above the prompt: Bit top-left, the Sessions board, the plan with its progress bar, Slack rows and the context line](docs/images/app-demo.png)
 
 <sub>A mock of a running session with `/bit demo` on. Every name, session and message is made up; the dog is the mod's own sprite.</sub>
@@ -12,7 +47,7 @@
 
 </details>
 
-A Claude Code mod that draws a 26×18 pixel dog above the prompt. Bit reacts to the session: he works, sleeps, hops when a task passes, droops when a check fails, and asks for you when a tool call waits on permission. Around him the band shows the plan and its progress, the other sessions on this machine, the GitHub and Slack inboxes, the context budget, and one favorite action button.
+The default layout draws a 26×18 pixel dog above the prompt. Bit reacts to the session: he works, sleeps, hops when a task passes, droops when a check fails, and asks for you when a tool call waits on permission. Around him the band shows the plan and its progress, the other sessions on this machine, the GitHub and Slack inboxes, the context budget, and one favorite action button.
 
 This file is two guides in one. The first part installs or runs this mod. The second part builds a pet mod from nothing, in four files, so you can make your own.
 
@@ -76,6 +111,40 @@ Four options fit the band to your repos. Each one is off until you set it, in `/
 - `previewLinkMatch`: text the preview link contains, when that comment holds more than one link.
 - `globalsFiles`: repo files with a `GLOBALS=(...)` list of paths. When your branch changes one of those paths, the band warns that every app rebuilds.
 
+### Side pane options
+
+`layout` picks the layout: `band` (the default) or `side-pane`. The rest name the side pane's sources. Each is empty until you set it, and a section whose source is not set keeps its headline, faded:
+
+```json
+{
+  "pluginConfigs": {
+    "pixel-pet": {
+      "options": {
+        "layout": "side-pane",
+        "codeRepo": "acme/app",
+        "configRepo": "acme/config",
+        "slackDomain": "acme.slack.com",
+        "designer": "Dana Levi",
+        "experimentType": "EXPERIMENT_V3",
+        "configCli": "dash",
+        "draftPath": "/api/config/draft/{code}",
+        "variantQuery": "exp={name}$${variant}&zone={zone}"
+      }
+    }
+  }
+}
+```
+
+- `codeRepo`: the repo whose PRs make the Code lane. Its owner is the org that PR search covers.
+- `configRepo`: the repo whose PRs make the Config lane.
+- `linearServer`: the MCP server to read tickets from, as `/mcp` lists it. Empty finds the one with `get_issue`.
+- `slackDomain`: your workspace, for the DM links under People.
+- `designer`: the designer's full Slack name, listed under People as `design`.
+- `experimentType`, `configCli`, `draftPath`: a dashboard CLI with `config search` and `curl` subcommands lists the experiment configs of that type that name the ticket, and loads drafts from that path.
+- `variantQuery`: the query that forces a variant, with `{name}`, `{variant}` and `{zone}`. Each value is encoded. With `previewMarker` and `previewLinkMatch` set, the link also rides the newest preview build a bot posted on the PR.
+
+The pane reads Linear and Slack through the MCP connectors the session already has, and GitHub through `gh`.
+
 ### Bit's moods
 
 ![Bit ready, working and passed](docs/images/sprite-poses.png)
@@ -86,6 +155,7 @@ He also droops when a check fails, sits up with `needs you` when a tool call wai
 
 | Command | What it does |
 |---|---|
+| `/ticket` | Side pane layout: open the pane and refresh it. On the desktop, ask Claude to "open the session pane" instead. |
 | `/pet` | Hide or show Bit. |
 | `/plan-progress [all\|plan\|demo\|mute\|unmute]` | Open the Plan Progress pane: this session's plan, or every session's. `mute` stops the chime. |
 | `/bit recap` · `/bit 1on1 <login>` · `/bit concentration` · `/bit impact <pr>` · `/bit worktrees` · `/bit squad [add\|remove <login>…]` · `/bit slack` | The rituals: a recap of the session, a one-on-one brief, a focus mode, a merge-impact watch, the worktree janitor, the squad list, the Slack connector. |
@@ -326,7 +396,7 @@ export const register: Register = on => {
 
 **Other sessions.** Each session writes a small JSON snapshot every five seconds under `~/.claude/plan-progress/sessions/` and reads the others' on each heartbeat. A snapshot older than three heartbeats is a closed or crashed session. The desktop app's own session id comes from the `CLAUDE_CODE_HOST_SESSION_ID` env var, and a `claude://` link built from it opens that session.
 
-**Panes.** `$.ui.open({ id, title })` opens a side pane; a `ui.render` hook on `{ component: 'Pane', requestId: id }` draws it. The mod has four: the plan, the actions, the critique, the worktree janitor.
+**Panes.** `$.ui.open({ id, title })` opens a side pane; a `ui.render` hook on `{ component: 'Pane', requestId: id }` draws it. The mod has five: the side pane, the plan, the actions, the critique, the worktree janitor.
 
 ### Things that bite
 
