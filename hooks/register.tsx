@@ -44,14 +44,20 @@ import type {
   ReviewItem,
   BitLayout,
   ContextView,
+  LinkedSession,
+  RunningAgent,
+  SessionStats,
   TicketView,
 } from '../types'
 
 import {
   CONTEXT_COLORS,
   SIDE_PANE,
-  SIDE_PANE_TITLE,
   drawSidePane,
+  TAB_MARKS,
+  cacheBadge,
+  sidePaneTitle,
+  loadSessionStats,
   loadTicket,
   noteDrafts,
   safeUrl,
@@ -60,7 +66,7 @@ import {
   writeSessionTldr,
   writeTldr,
 } from './side-pane'
-import type { SidePaneSettings } from './side-pane'
+import type { SessionLine, SidePaneSettings } from './side-pane'
 
 const PANE = 'plan-progress'
 const TITLE = 'Plan Progress'
@@ -1815,6 +1821,7 @@ async function snapshotOf($: EngineInterface): Promise<PlanSnapshot> {
     pr: prOf((await read($, githubAtom)).current),
     title: local.title === '' ? null : local.title,
     openedAt: local.openedAt === 0 ? null : local.openedAt,
+    ticket: await sessionTicketId($),
   }
 }
 
@@ -2027,15 +2034,16 @@ async function demoStep($: EngineInterface, step: number) {
 // ---- /bit demo: a band full of made-up data, for screenshots that carry no real names ----
 
 const DEMO_SESSION_PREFIX = 'demo-band-'
+const DEMO_TICKET = 'PET-42'
 const DEMO_TS_PREFIX = `${TEST_TS_PREFIX}demo-`
 const DEMO_PR_URL = 'https://github.com/example/app/pull/'
 
 const DEMO_SESSIONS: readonly (Partial<PlanSnapshot> & { sessionId: string; project: string })[] = [
-  { sessionId: 'demo-band-1', project: 'app', title: 'feat(band): draw the pet above the prompt', phase: 'building', done: 2, total: 5, isRunning: true },
-  { sessionId: 'demo-band-2', project: 'app', title: 'fix(auth): stop the OTP retry loop', needsYou: 'permission', pr: { key: 'app#412', url: `${DEMO_PR_URL}412`, isMerged: false } },
+  { sessionId: 'demo-band-1', project: 'app', title: 'feat(band): draw the pet above the prompt', phase: 'building', done: 2, total: 5, isRunning: true, ticket: DEMO_TICKET },
+  { sessionId: 'demo-band-2', project: 'app', title: 'fix(auth): stop the OTP retry loop', needsYou: 'permission', pr: { key: 'app#412', url: `${DEMO_PR_URL}412`, isMerged: false }, ticket: DEMO_TICKET },
   { sessionId: 'demo-band-3', project: 'app', title: 'chore(ci): drop the flaky e2e step', pr: { key: 'app#398', url: `${DEMO_PR_URL}398`, isMerged: true } },
   { sessionId: 'demo-band-4', project: 'docs', title: 'docs: write the mod guide', goal: 'polish the README before the launch' },
-  { sessionId: 'demo-band-5', project: 'app', title: 'refactor(api): split the billing router', pr: { key: 'app#401', url: `${DEMO_PR_URL}401`, isMerged: false } },
+  { sessionId: 'demo-band-5', project: 'app', title: 'refactor(api): split the billing router', pr: { key: 'app#401', url: `${DEMO_PR_URL}401`, isMerged: false }, ticket: DEMO_TICKET },
   { sessionId: 'demo-band-6', project: 'infra', title: 'spike: move the crons to Cloud Run', goal: 'is it cheaper than the GKE pool?' },
   { sessionId: 'demo-band-7', project: 'app', title: 'test(quiz): cover the returning-user path' },
 ]
@@ -2048,9 +2056,9 @@ const DEMO_SLACK: readonly { channelId: string; convo: string; from: string; tex
 
 // The side pane's ticket in the demo: every section filled, every name and link made up.
 const demoTicket = (now: number): TicketView => ({
-  id: 'PET-42',
+  id: DEMO_TICKET,
   title: 'Draw the pet beside the chat',
-  url: 'https://linear.app/example/issue/PET-42',
+  url: `https://linear.app/example/issue/${DEMO_TICKET}`,
   next: '#412 waits for review',
   tldr: 'Moves Bit into a side pane; #412 waits for review and the pane experiment is ready to launch.',
   drafts: [{ code: 'CFG-DEMO000042', config: 'exp_pane_1', url: 'https://dash.example.com/config/exp_pane_1', hoursLeft: 19, change: 'changes sections' }],
@@ -2085,26 +2093,31 @@ const demoTicket = (now: number): TicketView => ({
   loadedAt: now,
 })
 
-const DEMO_SESSION_TLDR = 'Building the pet band; two of five tasks are done and the side pane is next.'
+const demoStats = (now: number): SessionStats => ({
+  prs: demoTicket(now).prs.slice(0, 1),
+  reviews: [
+    {
+      key: 'app #412',
+      url: `${DEMO_PR_URL}412`,
+      decision: 'changes',
+      changesBy: ['noa-cohen'],
+      requested: ['omri-barak'],
+      waiting: [
+        { author: 'noa-cohen', text: 'Can the caret sit right after the title?', url: `${DEMO_PR_URL}412#discussion_r1` },
+        { author: 'dana-levi', text: 'The snake could rest while the session is idle.', url: `${DEMO_PR_URL}412#discussion_r2` },
+      ],
+    },
+  ],
+  errors: [],
+  loadedAt: now,
+})
 
-const demoReviews = (now: number): ReviewItem[] =>
-  [
-    { number: 415, title: 'fix(checkout): keep the coupon on reload', author: 'noa-cohen', hours: 3 },
-    { number: 409, title: 'feat(quiz): add the returning-user step', author: 'omri-barak', hours: 30 },
-    { number: 377, title: 'chore(deps): bump the date library', author: 'tal-shani', hours: 100 },
-  ].map(review => ({
-    key: `app#${review.number}`,
-    repo: 'app',
-    number: review.number,
-    title: review.title,
-    url: `${DEMO_PR_URL}${review.number}`,
-    author: review.author,
-    waitingSince: now - review.hours * 3_600_000,
-    size: 120,
-    isSquad: true,
-    isFanOut: false,
-    isAuthorsTurn: false,
-  }))
+const DEMO_AGENTS: readonly RunningAgent[] = [
+  { id: 'demo-agent-1', description: 'Review the pane diff', type: 'general-purpose', isWaiting: false },
+  { id: 'demo-agent-2', description: 'Find the band tests', type: 'Explore', isWaiting: false },
+]
+
+const DEMO_SESSION_TLDR = 'Building the pet band; two of five tasks are done and the side pane is next.'
 
 // How many days ago each demo session was opened, for the side pane's ages.
 const DEMO_AGE_DAYS = [0, 1, 3, 6, 2, 9, 4]
@@ -2139,7 +2152,7 @@ async function startBandDemo($: EngineInterface) {
     startedAt: now - 7 * 60_000,
     tasks: DEMO_TASKS.map((task, index) => ({ ...task, status: index < 2 ? 'completed' : index === 2 ? 'in_progress' : 'pending' })),
   }))
-  await update($, branchAtom, () => ({ name: 'pet-42-feat-pet-band', ticket: 'PET-42', changed: 3, ahead: 2, behind: 0, globals: [], hasSlash: false }))
+  await update($, branchAtom, () => ({ name: 'pet-42-feat-pet-band', ticket: DEMO_TICKET, changed: 3, ahead: 2, behind: 0, globals: [], hasSlash: false }))
   // Older than the flash window, so the rows show at once instead of one message taking over the line.
   const seenAt = now - SLACK_SHOW_MS - 60_000
   const items: SlackItem[] = DEMO_SLACK.flatMap(convo =>
@@ -2158,8 +2171,11 @@ async function startBandDemo($: EngineInterface) {
   await writeDemoSessions($)
   await refreshOthers($)
   if (isSidePane()) {
+    sidePaneLocal.marks = null
     await update($, ticketAtom, () => demoTicket(now))
+    await update($, sessionStatsAtom, () => demoStats(now))
     await update($, sessionTldrAtom, () => DEMO_SESSION_TLDR)
+    await update($, runningAgentsAtom, () => [...DEMO_AGENTS])
   }
   // Snapshots older than STALE_MS read as closed sessions, so the demo keeps them fresh.
   local.demo = $.clock.every(HEARTBEAT_MS, () => void writeDemoSessions($))
@@ -2175,8 +2191,13 @@ async function stopBandDemo($: EngineInterface) {
   await refreshOthers($)
   await refreshBranch($)
   if (isSidePane()) {
+    sidePaneLocal.marks = null
     sidePaneLocal.tldrFrom = ''
+    void refreshSessionStats($)
     await update($, sessionTldrAtom, () => null)
+    await update($, runningAgentsAtom, () => [])
+    void refreshLinkedSessions($)
+    void refreshRunningAgents($)
     await refreshTicket($, true)
     void refreshSessionTldr($)
   }
@@ -2862,10 +2883,31 @@ const collapsedSectionsAtom = atom({ plugin: 'pixel-pet', key: 'collapsedSection
 const COLLAPSED_KEY = 'side-pane.v1.collapsed'
 // The lists that run long start collapsed; the ticket's own sections start open.
 const COLLAPSED_BY_DEFAULT = new Set(['tp-review', 'tp-sessions'])
+
+// A section whose status changes in a way that matters blinks for a while; Code Review blinks for as long
+// as the session watches a PR (a babysit run, or the app's auto-fix).
+const blinkUntilAtom = atom({ plugin: 'pixel-pet', key: 'blinkUntil' } as const, {} as Record<string, number>)
+const watchingPrAtom = atom({ plugin: 'pixel-pet', key: 'isWatchingPr' } as const, false)
+
+// The session's own PRs (the branch's, and each one `gh pr create` printed) and where review stands on them.
+const sessionStatsAtom = atom({ plugin: 'pixel-pet', key: 'sessionStats' } as const, null as SessionStats | null, { shape: 'stats-2' })
+const sessionPrUrlsAtom = atom({ plugin: 'pixel-pet', key: 'sessionPrUrls' } as const, [] as string[])
+// Related Sessions: the app's linked family of this session, and its own subagents still at work.
+const linkedSessionsAtom = atom({ plugin: 'pixel-pet', key: 'linkedSessions' } as const, [] as LinkedSession[])
+const runningAgentsAtom = atom({ plugin: 'pixel-pet', key: 'runningAgents' } as const, [] as RunningAgent[])
+// The model, its effort and fast mode: the app's record of the session, else what the last request named.
+const sessionModeAtom = atom({ plugin: 'pixel-pet', key: 'sessionMode' } as const, null as { model: string; effort: string | null; fast: string | null } | null)
+const SESSION_RECORD_SERVER = 'ccd_session_mgmt'
+const BLINK_MS = 30_000
+const BLINK_TICK_MS = 5000
+// In these sections only something new counts: a new message, review, draft or session waiting on you; a dismissal does not.
+const GROWING_SECTIONS = new Set(['tp-drafts', 'tp-slack', 'tp-review', 'tp-sessions'])
 const sessionTldrAtom = atom({ plugin: 'pixel-pet', key: 'sessionTldr' } as const, null as string | null)
 const SESSION_TLDR_GAP_MS = 60_000
 
 const SIDE_PANE_SESSIONS = 6
+// How far the Bit pane's body is scrolled above its pinned footer, in rows.
+const paneOffsetAtom = atom({ plugin: 'pixel-pet', key: 'paneOffset' } as const, 0)
 const STATUS_COLOR = { active: '#3fb950', waiting: '#F0883E', idle: '#f85149' }
 
 const SIDE_PANE_TICK_MS = 60_000
@@ -2885,6 +2927,12 @@ const sidePaneLocal = {
   // What the session TL;DR was last written from, so an unchanged session costs no model call.
   tldrFrom: '',
   lastTldrAt: 0,
+  // What each section showed at the last blink check; null until the first, which sets the baseline.
+  marks: null as Record<string, string[]> | null,
+  statsLoading: null as Promise<void> | null,
+  bitTitle: '',
+  // How far the body can scroll, as the last drawing measured it.
+  maxOffset: 0,
 }
 
 const isSidePane = () => config.layout === 'side-pane'
@@ -2911,6 +2959,7 @@ async function loadTicketView($: EngineInterface) {
   }
   const id = await sessionTicketId($)
   sidePaneLocal.ticketId = id
+  void retitlePanes($)
   if (id === null) {
     if ((await read($, ticketAtom)) !== null) {
       await update($, ticketAtom, () => null)
@@ -2962,6 +3011,8 @@ async function tickSidePane($: EngineInterface) {
   if (id !== sidePaneLocal.ticketId || ticket === null || now - ticket.loadedAt >= due - 5000) {
     void refreshTicket($)
   }
+  void refreshSessionStats($)
+  void refreshLinkedSessions($)
 }
 
 async function refreshContextView($: EngineInterface) {
@@ -3020,8 +3071,226 @@ async function refreshSessionTldr($: EngineInterface) {
   }
 }
 
+async function bitTitle($: EngineInterface): Promise<string> {
+  const mark = (await read($, attentionAtom)) ? TAB_MARKS.waiting : (await read($, runningAtom)) ? TAB_MARKS.running : TAB_MARKS.idle
+  const { tasks } = await read($, planAtom)
+  return sidePaneTitle(mark, await sessionTicketId($), local.title, countDone(tasks), tasks.length)
+}
+
 async function openSidePane($: EngineInterface) {
-  return $.ui.open({ id: SIDE_PANE, title: SIDE_PANE_TITLE })
+  sidePaneLocal.bitTitle = await bitTitle($)
+  return $.ui.open({ id: SIDE_PANE, title: sidePaneLocal.bitTitle })
+}
+
+// The desktop app's own record of the session holds its effort and fast mode; outside it, the request's own fill in.
+async function refreshSessionMode($: EngineInterface) {
+  try {
+    const result = await $.mcp.call(SESSION_RECORD_SERVER, 'get_session', { session_id: 'self' })
+    const record = result.isError ? null : (JSON.parse(result.content.map(block => (block.type === 'text' ? block.text : '')).join('')) as { model?: unknown; effort?: unknown; fastMode?: { state?: unknown } })
+    if (record === null || typeof record.model !== 'string') {
+      return
+    }
+    const mode = { model: record.model, effort: typeof record.effort === 'string' ? record.effort : null, fast: typeof record.fastMode?.state === 'string' ? record.fastMode.state : null }
+    const current = await read($, sessionModeAtom)
+    if (JSON.stringify(current) !== JSON.stringify(mode)) {
+      await update($, sessionModeAtom, () => mode)
+    }
+  } catch {
+    // Only the desktop app has the record; a terminal session keeps what its requests named.
+  }
+}
+
+// The app's linked family of this session; it answers plain text, not JSON, when there is none.
+async function refreshLinkedSessions($: EngineInterface) {
+  if (local.isDemo) {
+    return
+  }
+  try {
+    const result = await $.mcp.call(SESSION_RECORD_SERVER, 'list_sessions', { linked: true })
+    if (result.isError) {
+      return
+    }
+    const answer = result.content.map(block => (block.type === 'text' ? block.text : '')).join('')
+    const rows = answer.trimStart().startsWith('[') ? (JSON.parse(answer) as { sessionId?: unknown; title?: unknown; isRunning?: unknown; lastActivityAt?: unknown }[]) : []
+    const linked = rows.flatMap(row =>
+      typeof row.sessionId === 'string'
+        ? [{ id: row.sessionId, title: typeof row.title === 'string' ? row.title : row.sessionId, isRunning: row.isRunning === true, lastActivityAt: Date.parse(String(row.lastActivityAt)) || 0 }]
+        : [],
+    )
+    if (JSON.stringify(linked) !== JSON.stringify(await read($, linkedSessionsAtom))) {
+      await update($, linkedSessionsAtom, () => linked)
+    }
+  } catch {
+    // Only the desktop app links sessions; a terminal session has no family to list.
+  }
+}
+
+async function refreshRunningAgents($: EngineInterface) {
+  if (local.isDemo) {
+    return
+  }
+  const agents = (await $.agent.list())
+    .filter(agent => agent.status === 'pending' || agent.status === 'running' || agent.status === 'waiting')
+    .map(agent => ({ id: agent.id, description: agent.description, type: agent.type, isWaiting: agent.status === 'waiting' }))
+  if (JSON.stringify(agents) !== JSON.stringify(await read($, runningAgentsAtom))) {
+    await update($, runningAgentsAtom, () => agents)
+  }
+}
+
+// The other sessions worth listing beside this one: its linked family and the ones on its ticket.
+// A family member that runs no Bit has no snapshot, so the app's row stands in for one.
+async function relatedSessions($: EngineInterface): Promise<PlanSnapshot[]> {
+  const others = await read($, othersAtom)
+  if (local.isDemo) {
+    return others.filter(other => other.sessionId.startsWith(DEMO_SESSION_PREFIX) && other.ticket === DEMO_TICKET)
+  }
+  const linked = await read($, linkedSessionsAtom)
+  const linkedIds = new Set(linked.map(session => session.id))
+  const ticket = await sessionTicketId($)
+  const appId = (other: PlanSnapshot) => other.hostSessionId ?? `local_${other.sessionId}`
+  const related = others.filter(other => linkedIds.has(appId(other)) || (ticket !== null && other.ticket === ticket))
+  const shown = new Set(related.map(appId))
+  const bare = linked
+    .filter(session => !shown.has(session.id))
+    .map(
+      (session): PlanSnapshot => ({
+        sessionId: session.id,
+        hostSessionId: session.id,
+        project: '',
+        title: session.title,
+        goal: null,
+        phase: null,
+        done: 0,
+        total: 0,
+        startedAt: null,
+        endedAt: null,
+        updatedAt: session.lastActivityAt,
+        isRunning: session.isRunning,
+      }),
+    )
+  return [...related, ...bare]
+}
+
+// Opening an open id only retitles it; a tab the person closed stays closed.
+async function retitlePanes($: EngineInterface) {
+  if (!isSidePane()) {
+    return
+  }
+  const open = new Set((await $.ui.panes()).map(pane => pane.id))
+  const bit = await bitTitle($)
+  if (bit !== sidePaneLocal.bitTitle && open.has(SIDE_PANE)) {
+    sidePaneLocal.bitTitle = bit
+    await $.ui.open({ id: SIDE_PANE, title: bit })
+  }
+}
+
+async function loadSessionStatsView($: EngineInterface) {
+  if (local.isDemo) {
+    return
+  }
+  const current = (await read($, githubAtom)).current
+  const urls = [...(current === null ? [] : [current.url]), ...(await read($, sessionPrUrlsAtom))]
+  const stats = await loadSessionStats($, config.sidePane, urls, await $.clock.now())
+  await update($, sessionStatsAtom, () => stats)
+}
+
+// One load at a time; a request during one waits for it.
+function refreshSessionStats($: EngineInterface): Promise<void> {
+  sidePaneLocal.statsLoading ??= loadSessionStatsView($).finally(() => {
+    sidePaneLocal.statsLoading = null
+  })
+  return sidePaneLocal.statsLoading
+}
+
+// The sessions the panes list, waiting on you first, each with its age in its status color.
+function sessionLines($: EngineInterface, others: readonly PlanSnapshot[], now: number, nameWidth: number): SessionLine[] {
+  return [...others]
+    .sort((a, b) => sessionRank(a) - sessionRank(b))
+    .map(other => {
+      const [age, color] = sessionAge(other, now)
+      return {
+        key: other.sessionId,
+        name: clip(sessionName(other), nameWidth),
+        state: age,
+        color,
+        prKey: other.pr?.key ?? null,
+        prUrl: other.pr ? safeUrl(other.pr.url) : null,
+        gist: clip(sessionGist(other), 72),
+        onOpen: () => void openSession($, other),
+      }
+    })
+}
+
+// Room for a session's name beside its dot and age.
+const nameWidthOf = (columns: number) => Math.max(16, columns - 12)
+
+// This session's subagents still at work, after its related sessions; the app opens no pane for one.
+const agentLines = (agents: readonly RunningAgent[], nameWidth: number): SessionLine[] =>
+  agents.map(agent => ({
+    key: `agent-${agent.id}`,
+    name: clip(agent.description, nameWidth),
+    state: agent.isWaiting ? 'waiting' : 'running',
+    color: agent.isWaiting ? STATUS_COLOR.waiting : STATUS_COLOR.active,
+    prKey: null,
+    prUrl: null,
+    gist: `${agent.type} agent`,
+    onOpen: null,
+  }))
+
+async function foldAll($: EngineInterface, sections: readonly string[], isCollapsed: boolean) {
+  const collapsed = await update($, collapsedSectionsAtom, map => ({ ...map, ...Object.fromEntries(sections.map(section => [section, isCollapsed])) }))
+  await $.store.set(COLLAPSED_KEY, collapsed)
+}
+
+// What each section shows that a change of is worth a blink, as comparable strings.
+async function sectionMarks($: EngineInterface, now: number): Promise<Record<string, string[]>> {
+  const ticket = await read($, ticketAtom)
+  const github = await read($, githubAtom)
+  const related = await relatedSessions($)
+  return {
+    'tp-ticket': ticket === null ? [] : [ticket.id, ticket.next],
+    'tp-drafts': ticket?.drafts.map(draft => draft.code) ?? [],
+    'tp-prs': ticket?.prs.map(pr => `${pr.key}:${pr.state}:${pr.ci}:${pr.review}`) ?? [],
+    'tp-exp': ticket?.experiments.map(exp => `${exp.name}:${exp.lane}`) ?? [],
+    'tp-slack': slackConversations(await read($, slackAtom), await read($, slackMarksAtom), now).map(convo => `${convo.channelId}:${convo.latestTs}`),
+    'tp-review': ((await read($, sessionStatsAtom))?.reviews ?? []).flatMap(review => [
+      ...(review.decision === 'changes' ? [`${review.key}:changes`] : []),
+      ...review.waiting.map(thread => `${review.key}:${thread.url ?? thread.text}`),
+    ]),
+    'tp-sessions': related.filter(other => other.needsYou).map(other => other.sessionId),
+  }
+}
+
+const isWorthBlinking = (section: string, before: readonly string[] | undefined, after: readonly string[]) =>
+  before !== undefined &&
+  (GROWING_SECTIONS.has(section) ? after.some(mark => !before.includes(mark)) : before.length > 0 && before.join('|') !== after.join('|'))
+
+async function checkBlinks($: EngineInterface) {
+  await retitlePanes($)
+  await refreshRunningAgents($)
+  const now = await $.clock.now()
+  const marks = await sectionMarks($, now)
+  const before = sidePaneLocal.marks
+  // Another ticket on the branch starts a new baseline instead of lighting everything up.
+  sidePaneLocal.marks = before !== null && before['tp-ticket']?.[0] !== marks['tp-ticket']?.[0] && (before['tp-ticket']?.length ?? 0) > 0 ? null : marks
+  const current = await read($, blinkUntilAtom)
+  const next = Object.fromEntries(Object.entries(current).filter(([, until]) => until > now))
+  if (before !== null && sidePaneLocal.marks !== null) {
+    for (const [section, after] of Object.entries(marks)) {
+      if (isWorthBlinking(section, before[section], after)) next[section] = now + BLINK_MS
+    }
+  }
+  if (JSON.stringify(next) !== JSON.stringify(current)) {
+    await update($, blinkUntilAtom, () => next)
+  }
+}
+
+async function scrollPane($: EngineInterface, by: number) {
+  const offset = await read($, paneOffsetAtom)
+  const moved = Math.min(sidePaneLocal.maxOffset, Math.max(0, offset + by))
+  if (moved !== offset) {
+    await update($, paneOffsetAtom, () => moved)
+  }
 }
 
 async function toggleSection($: EngineInterface, section: string) {
@@ -3029,16 +3298,11 @@ async function toggleSection($: EngineInterface, section: string) {
   await $.store.set(COLLAPSED_KEY, collapsed)
 }
 
-// How long a PR has waited on your review: green under a day, orange under three, red after.
-const reviewWait = (review: ReviewItem, now: number): [string, string] => {
-  const waited = now - review.waitingSince
-  return [formatAge(waited), waited < DAY_MS ? STATUS_COLOR.active : waited < 3 * DAY_MS ? STATUS_COLOR.waiting : STATUS_COLOR.idle]
-}
-
 
 // The pane pages Sessions on the band's offset; the band draws no Sessions in this layout.
 async function scrollSidePaneSessions($: EngineInterface, by: number) {
-  const last = Math.max(0, (await read($, othersAtom)).length - SIDE_PANE_SESSIONS)
+  const rows = (await relatedSessions($)).length + (await read($, runningAgentsAtom)).length
+  const last = Math.max(0, rows - SIDE_PANE_SESSIONS)
   const offset = Math.min(await read($, sessionsOffsetAtom), last)
   const moved = Math.min(last, Math.max(0, offset + by))
   if (moved !== offset) {
@@ -3083,11 +3347,15 @@ async function startSidePane($: EngineInterface) {
   const storedCollapsed = await $.store.get(COLLAPSED_KEY)
   await update($, collapsedSectionsAtom, () => (storedCollapsed !== null && typeof storedCollapsed === 'object' ? (storedCollapsed as Record<string, boolean>) : {}))
   void openSidePane($)
+  void refreshSessionMode($)
+  void refreshLinkedSessions($)
   void refreshTicket($)
+  void refreshSessionStats($)
   void refreshContextView($)
   // A resumed session has a transcript to sum up; a new one waits for its first turn.
   $.clock.after(3000, () => void refreshSessionTldr($))
   $.clock.every(SIDE_PANE_TICK_MS, () => void tickSidePane($))
+  $.clock.every(BLINK_TICK_MS, () => void checkBlinks($))
 }
 
 // What the session is doing, as Bit shows it: a mood (happy/sad) wins, then the session state.
@@ -3236,6 +3504,10 @@ export const register: Register = (on, options) => {
       local.needsYou = null
       void publish($)
     }
+    // The app sends a CI monitor event only while it watches the session's PR.
+    if (isSidePane() && (text.includes('<ci-monitor-event') || /^\/(eng:)?babysit/i.test(text))) {
+      await update($, watchingPrAtom, () => true)
+    }
     if (e.origin.kind === 'task-notification') {
       await update($, backgroundAtom, list => list.slice(1))
     }
@@ -3249,6 +3521,7 @@ export const register: Register = (on, options) => {
     local.turnStartedAt = await $.clock.now()
     await update($, runningAtom, () => true)
     await update($, attentionAtom, () => false)
+    void retitlePanes($)
     return next(e)
   })
 
@@ -3262,9 +3535,14 @@ export const register: Register = (on, options) => {
     const endedAt = await $.clock.now()
     await update($, lastActiveAtom, () => endedAt)
     void publish($)
+    void retitlePanes($)
     if (isSidePane() && endedAt - sidePaneLocal.lastTurnAt >= TICKET_TURN_GAP_MS) {
       sidePaneLocal.lastTurnAt = endedAt
       void refreshTicket($)
+      void refreshSessionStats($)
+    }
+    if (isSidePane()) {
+      void refreshSessionMode($)
     }
     if (isSidePane() && endedAt - sidePaneLocal.lastTldrAt >= SESSION_TLDR_GAP_MS) {
       void refreshSessionTldr($)
@@ -3305,6 +3583,13 @@ export const register: Register = (on, options) => {
     }
 
     const ran = await next(e)
+    if (isSidePane() && ran.deny === undefined && ran.isError !== true) {
+      if (call.tool === 'mcp__ccd_pr__set_monitor' && typeof call.auto_fix === 'boolean') {
+        await update($, watchingPrAtom, () => call.auto_fix === true)
+      } else if (call.tool === 'Skill' && /babysit/i.test(String(call.skill ?? ''))) {
+        await update($, watchingPrAtom, () => true)
+      }
+    }
     // Config drafts cannot be listed, so the side pane learns their codes from the results that print them.
     if (isSidePane() && ran.deny === undefined) {
       const output = outputOf(ran)
@@ -3405,6 +3690,15 @@ export const register: Register = (on, options) => {
     if (isSidePane() && !hasFailed && TICKET_COMMAND.test(e.command)) {
       void refreshTicket($, true)
     }
+    if (isSidePane() && !hasFailed && /\bgh\s+pr\s+create\b/.test(e.command)) {
+      const created = outputOf(ran).match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/)?.[0]
+      if (created !== undefined) {
+        await update($, sessionPrUrlsAtom, urls => (urls.includes(created) ? urls : [...urls, created]))
+      }
+    }
+    if (isSidePane() && !hasFailed && TICKET_COMMAND.test(e.command)) {
+      void refreshSessionStats($)
+    }
     return ran
   })
 
@@ -3436,6 +3730,7 @@ export const register: Register = (on, options) => {
     // An idle prompt is the normal wait after a turn; anything else is a question or permission waiting on you.
     if (e.notification_type !== 'idle_prompt') {
       await update($, attentionAtom, () => true)
+      void retitlePanes($)
     }
     void publish($)
     return next(e)
@@ -3544,6 +3839,15 @@ export const register: Register = (on, options) => {
   })
 
   // While the band fits, the wheel over it scrolls the Sessions list; a band taller than its room scrolls as the engine's.
+  // The Bit pane fits its room, so the engine has nothing to scroll: the wheel slides the body above the pinned footer.
+  on('ui.scroll', { component: 'Pane', requestId: SIDE_PANE }, async ($, e, next) => {
+    if (e.origin.kind !== 'person' || e.contentRows > e.bodyRows || sidePaneLocal.maxOffset === 0) {
+      return next(e)
+    }
+    await scrollPane($, e.by)
+    return {}
+  })
+
   on('ui.scroll', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.origin.kind !== 'person' || e.contentRows > e.bodyRows || local.sessionsTotal <= local.sessionsShown) {
       return next(e)
@@ -3564,7 +3868,7 @@ export const register: Register = (on, options) => {
       const { Box, Button } = $.ui.resolve(e)
       return (
         <Box flexDirection="row" justifyContent="flex-end">
-          <Button key="pet-pane-open" plain dimColor label={`🐾 ${PET}`} onPress={() => void openSidePane($)} />
+          <Button key="pet-pane-open" plain dimColor label={`🐶 ${PET}`} onPress={() => void openSidePane($)} />
         </Box>
       )
     }
@@ -3926,48 +4230,43 @@ export const register: Register = (on, options) => {
     }
     const now = await $.clock.now()
     const isWorking = await read($, runningAtom)
-    const others = (await read($, othersAtom)).filter(other => !local.isDemo || other.sessionId.startsWith(DEMO_SESSION_PREFIX))
+    const related = await relatedSessions($)
+    const sessions = [...sessionLines($, related, now, nameWidthOf(e.props.bodyColumns)), ...agentLines(await read($, runningAgentsAtom), nameWidthOf(e.props.bodyColumns))]
     const slackView = await read($, slackAtom)
     const slack: SlackView = local.isDemo ? { ...slackView, unread: slackView.unread.filter(item => item.ts.startsWith(DEMO_TS_PREFIX)) } : slackView
     const id = await sessionTicketId($)
     const ticket = await read($, ticketAtom)
     const isKeepingWarm = await read($, keepWarmAtom)
-    const cacheAt = isKeepingWarm ? await read($, cacheAtAtom) : null
-    const warmLeft = cacheAt === null ? null : cacheAt + (await read($, ttlAtom)).minutes * 60_000 - (await read($, cacheNowAtom))
+    const cacheAt = await read($, cacheAtAtom)
+    const ttl = await read($, ttlAtom)
+    const warmLeft = cacheAt === null ? null : cacheAt + ttl.minutes * 60_000 - (await read($, cacheNowAtom))
     const kiss = actionById('kiss')
     const collapsed = await read($, collapsedSectionsAtom)
-    // Room for a session's name beside its dot and age.
-    const nameWidth = Math.max(16, e.props.bodyColumns - 12)
+    const plan = await read($, planAtom)
+    const task = currentTask(plan)
+    const isWaiting = await read($, attentionAtom)
+    const lastActiveAt = await read($, lastActiveAtom)
     return drawSidePane($.ui.resolve(e), {
       columns: e.props.bodyColumns,
       tldr: await read($, sessionTldrAtom),
+      status: {
+        text: task ?? (isWaiting ? 'Waiting on you' : isWorking ? (plan.phase === null ? 'Running' : `Running · ${plan.phase}`) : lastActiveAt === 0 ? 'Idle' : `Idle · ${formatAge(now - lastActiveAt)}`),
+        color: isWaiting ? STATUS_COLOR.waiting : isWorking ? STATUS_COLOR.active : '#8b949e',
+      },
+      mode: await read($, sessionModeAtom),
       ticketId: id,
       ticket: ticket?.id === id ? ticket : null,
-      sessions: [...others]
-        .sort((a, b) => sessionRank(a) - sessionRank(b))
-        .map(other => {
-          const [age, color] = sessionAge(other, now)
-          return {
-            key: other.sessionId,
-            name: clip(sessionName(other), nameWidth),
-            state: age,
-            color,
-            prKey: other.pr?.key ?? null,
-            prUrl: other.pr ? safeUrl(other.pr.url) : null,
-            gist: clip(sessionGist(other), 72),
-            onOpen: () => void openSession($, other),
-          }
-        }),
-      needYou: others.filter(other => other.needsYou).length,
-      sessionsOffset: Math.min(await read($, sessionsOffsetAtom), Math.max(0, others.length - SIDE_PANE_SESSIONS)),
+      sessions,
+      needYou: related.filter(other => other.needsYou).length,
+      sessionsOffset: Math.min(await read($, sessionsOffsetAtom), Math.max(0, sessions.length - SIDE_PANE_SESSIONS)),
       sessionsShown: SIDE_PANE_SESSIONS,
       isCollapsed: section => collapsed[section] ?? COLLAPSED_BY_DEFAULT.has(section),
       onToggleSection: section => void toggleSection($, section),
+      onFoldAll: (sections, isFolded) => void foldAll($, sections, isFolded),
+      blinking: [...Object.keys(await read($, blinkUntilAtom)), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
+      isWorking,
       onScrollSessions: by => void scrollSidePaneSessions($, by),
-      reviews: (local.isDemo ? demoReviews(now) : (await read($, githubAtom)).reviews.filter(review => isActionableReview(review, now))).map(review => {
-        const [age, color] = reviewWait(review, now)
-        return { key: review.key, label: `${review.repo} #${review.number}`, url: review.url, title: review.title, author: review.author, age, color }
-      }),
+      reviews: (await read($, sessionStatsAtom))?.reviews ?? [],
       slack: slackConversations(slack, await read($, slackMarksAtom), now).map(convo => {
         const latest = convo.waiting.at(-1)
         return {
@@ -3984,12 +4283,19 @@ export const register: Register = (on, options) => {
       onClearSlack: () => void clearSlack($),
       context: await read($, contextViewAtom),
       warmFor: !isKeepingWarm ? null : warmLeft === null || warmLeft <= 0 ? 'waiting' : `${Math.ceil(warmLeft / 60_000)}m`,
+      cache: cacheBadge(warmLeft, warnLeadMs(ttl.minutes)),
       onKeepWarm: () => void toggleKeepWarm($),
       isKissDimmed: isWorking,
       onKiss: () => runAction($, kiss, isWorking),
       onRefresh: () => void refreshTicket($, true),
       isLoading: sidePaneLocal.loading !== null,
       clock: hourMinute,
+      rows: e.props.scroll.bodyRows,
+      offset: await read($, paneOffsetAtom),
+      onScroll: by => void scrollPane($, by),
+      onBodyRows: maxOffset => {
+        sidePaneLocal.maxOffset = maxOffset
+      },
     })
   })
 
@@ -3998,6 +4304,10 @@ export const register: Register = (on, options) => {
       cacheLocal.model = e.model
       const at = await $.clock.now()
       await update($, cacheAtAtom, () => at)
+      if (isSidePane()) {
+        const effort = typeof e.effort === 'string' ? e.effort : null
+        await update($, sessionModeAtom, mode => (mode?.model === e.model && mode.effort === effort ? mode : { model: e.model, effort, fast: mode?.fast ?? null }))
+      }
     }
 
     return yield* next(e)

@@ -47,6 +47,8 @@ export type PlanSnapshot = {
   title?: string | null
   // When the session was opened; a snapshot from an older Bit has none.
   openedAt?: number | null
+  // The ticket the session works on, from its branch or title; a snapshot from an older Bit has none.
+  ticket?: string | null
 }
 
 export type SessionPr = {
@@ -289,6 +291,46 @@ export type TicketView = {
   loadedAt: number
 }
 
+// A review thread still open whose last comment is not yours: it waits on your reply.
+export type ReviewThread = {
+  author: string
+  text: string
+  url: string | null
+}
+
+// Where review stands on one of the session's PRs.
+export type SessionReview = {
+  key: string
+  url: string
+  decision: 'approved' | 'changes' | 'pending'
+  changesBy: string[]
+  requested: string[]
+  waiting: ReviewThread[]
+}
+
+// A session in this one's linked family, as the desktop app lists it.
+export type LinkedSession = {
+  id: string
+  title: string
+  isRunning: boolean
+  lastActivityAt: number
+}
+
+// A subagent of this session that has not finished.
+export type RunningAgent = {
+  id: string
+  description: string
+  type: string
+  isWaiting: boolean
+}
+
+export type SessionStats = {
+  prs: TicketPr[]
+  reviews: SessionReview[]
+  errors: string[]
+  loadedAt: number
+}
+
 export type ContextPart = {
   tokens: number
   color: string
@@ -342,7 +384,15 @@ declare module 'claude-code' {
       contextView: ContextView | null
       sessionTldr: string | null
       collapsedSections: Record<string, boolean>
+      blinkUntil: Record<string, number>
+      isWatchingPr: boolean
+      sessionStats: Shaped<SessionStats | null>
+      sessionPrUrls: string[]
+      paneOffset: number
+      sessionMode: { model: string; effort: string | null; fast: string | null } | null
       isKeepingWarm: boolean
+      linkedSessions: LinkedSession[]
+      runningAgents: RunningAgent[]
     }
   }
 }

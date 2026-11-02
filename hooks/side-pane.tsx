@@ -12,12 +12,23 @@ import type {
   TicketRelated,
   TicketVariant,
   TicketView,
+  ReviewThread,
+  SessionReview,
+  SessionStats,
 } from '../types'
 
 // ---- side-pane: the ticket the session works on, beside the chat, with Bit's Sessions and Slack ----
 
 export const SIDE_PANE = 'ticket'
-export const SIDE_PANE_TITLE = 'Bit'
+// The app draws the pane tab; a title is all a mod gives it, so it says the session's state at a glance:
+// a mark for running, waiting on you or idle, the ticket (else the session's title), and the plan's progress.
+export const TAB_MARKS = { running: '🟢', waiting: '🟠', idle: '⚪' }
+const TAB_NAME_MAX = 22
+
+export function sidePaneTitle(mark: string, ticketId: string | null, sessionTitle: string, done: number, total: number): string {
+  const name = ticketId ?? (sessionTitle === '' ? 'Bit' : sessionTitle.length > TAB_NAME_MAX ? `${sessionTitle.slice(0, TAB_NAME_MAX - 1)}…` : sessionTitle)
+  return `${mark} ${name}${total > 0 ? ` · ${done}/${total}` : ''}`
+}
 
 // Each value names one source; empty hides the part that source feeds.
 export type SidePaneSettings = {
@@ -103,10 +114,12 @@ async function mcpJson($: EngineInterface, server: string, tool: string, args: R
   }
 }
 
-// Module facts a reload refills: which Linear server answered, and which transcript was scanned for drafts.
+// Module facts a reload refills: which Linear server answered, which transcript was scanned for drafts,
+// and your GitHub login, to tell the threads that wait on you.
 const paneLocal = {
   linearServer: null as string | null,
   scannedTranscript: '',
+  login: null as string | null,
 }
 
 // ---- Linear ----
@@ -239,35 +252,111 @@ async function loadPrs(
   const raw = (
     await Promise.all(
       [...found.values()].map(async ({ repo, number, isLinked }) => {
-        const view = await runCli($, ['gh', 'pr', 'view', String(number), '-R', repo, '--json', 'number,title,url,state,isDraft,reviewDecision,statusCheckRollup,body,comments,headRefName'])
-        if (view === null || view.exitCode !== 0) {
-          errors.push(`${repo}#${number}: ${oneLine(view?.stderr || 'gh failed', 120)}`)
-          return null
-        }
-        const pr = parseJson(view.stdout) as GhPr | undefined
-        if (pr === undefined || (!isLinked && !namesTicket.test(`${pr.title}\n${pr.headRefName}\n${pr.body}`))) return null
-        return { ...pr, repo }
+        const pr = await viewPr($, repo, number, errors)
+        return pr === null || (!isLinked && !namesTicket.test(`${pr.title}\n${pr.headRefName}\n${pr.body}`)) ? null : pr
       }),
     )
   ).filter((pr): pr is GhPr & { repo: string } => pr !== null && pr.state !== 'CLOSED')
-  const prs = raw.map((pr): TicketPr => {
-    const isMerged = pr.state === 'MERGED'
-    const { ci, failing } = isMerged ? { ci: 'none' as CiState, failing: [] } : ciOfChecks(pr.statusCheckRollup ?? [])
-    return {
-      key: `${pr.repo.split('/')[1] ?? pr.repo} #${pr.number}`,
-      number: pr.number,
-      url: safeUrl(pr.url) ?? `https://github.com/${pr.repo}/pull/${pr.number}`,
-      title: plainTitle(pr.title),
-      state: isMerged ? 'merged' : pr.isDraft ? 'draft' : 'open',
-      ci,
-      failing,
-      review: pr.reviewDecision === 'APPROVED' ? 'approved' : pr.reviewDecision === 'CHANGES_REQUESTED' ? 'changes requested' : 'waiting for review',
-      isConfig: settings.configRepo !== '' && pr.repo.toLowerCase() === settings.configRepo.toLowerCase(),
-      lane: isMerged ? 3 : pr.isDraft ? 0 : 1,
-    }
-  })
+  const prs = raw.map(pr => toTicketPr(pr, settings))
   prs.sort((a, b) => Number(a.isConfig) - Number(b.isConfig) || b.number - a.number)
   return { prs, raw }
+}
+
+async function viewPr($: EngineInterface, repo: string, number: number, errors: string[]): Promise<(GhPr & { repo: string }) | null> {
+  const view = await runCli($, ['gh', 'pr', 'view', String(number), '-R', repo, '--json', 'number,title,url,state,isDraft,reviewDecision,statusCheckRollup,body,comments,headRefName'])
+  if (view === null || view.exitCode !== 0) {
+    errors.push(`${repo}#${number}: ${oneLine(view?.stderr || 'gh failed', 120)}`)
+    return null
+  }
+  const pr = parseJson(view.stdout) as GhPr | undefined
+  return pr === undefined ? null : { ...pr, repo }
+}
+
+function toTicketPr(pr: GhPr & { repo: string }, settings: SidePaneSettings): TicketPr {
+  const isMerged = pr.state === 'MERGED'
+  const { ci, failing } = isMerged ? { ci: 'none' as CiState, failing: [] } : ciOfChecks(pr.statusCheckRollup ?? [])
+  return {
+    key: `${pr.repo.split('/')[1] ?? pr.repo} #${pr.number}`,
+    number: pr.number,
+    url: safeUrl(pr.url) ?? `https://github.com/${pr.repo}/pull/${pr.number}`,
+    title: plainTitle(pr.title),
+    state: isMerged ? 'merged' : pr.isDraft ? 'draft' : 'open',
+    ci,
+    failing,
+    review: pr.reviewDecision === 'APPROVED' ? 'approved' : pr.reviewDecision === 'CHANGES_REQUESTED' ? 'changes requested' : 'waiting for review',
+    isConfig: settings.configRepo !== '' && pr.repo.toLowerCase() === settings.configRepo.toLowerCase(),
+    lane: isMerged ? 3 : pr.isDraft ? 0 : 1,
+  }
+}
+
+// ---- the session's own PRs: the branch's and each one it opened, with where review stands ----
+
+const REVIEW_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewDecision
+      reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } ... on Team { name } } } }
+      latestReviews(first: 10) { nodes { state author { login } } }
+      reviewThreads(first: 50) { nodes { isResolved comments(last: 1) { nodes { author { login } body url } } } }
+    }
+  }
+}`
+
+type GraphReviewPr = {
+  reviewDecision: string | null
+  reviewRequests: { nodes: { requestedReviewer: { login?: string; name?: string } | null }[] }
+  latestReviews: { nodes: { state: string; author: { login: string } | null }[] }
+  reviewThreads: { nodes: { isResolved: boolean; comments: { nodes: { author: { login: string } | null; body: string; url: string }[] } }[] }
+}
+
+// A comment's words without its markdown, HTML and code, on one line.
+const plainComment = (body: string) =>
+  oneLine(
+    body
+      .replace(/<!--[\s\S]*?-->|<[^>]+>/g, ' ')
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/[*_`#>]+/g, '')
+      .replace(/\s+/g, ' '),
+    200,
+  )
+
+async function loadReview($: EngineInterface, pr: TicketPr, repo: string, login: string, errors: string[]): Promise<SessionReview | null> {
+  const [owner = '', name = ''] = repo.split('/')
+  const ran = await runCli($, ['gh', 'api', 'graphql', '-f', `query=${REVIEW_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr.number}`])
+  const answer = ran?.exitCode === 0 ? parseJson(ran.stdout) : undefined
+  const review = isRecord(answer) && isRecord(answer.data) && isRecord(answer.data.repository) ? (answer.data.repository.pullRequest as GraphReviewPr | null) : null
+  if (review === null || review === undefined) {
+    errors.push(`Review of ${pr.key}: ${oneLine(ran?.stderr || 'unreadable answer', 120)}`)
+    return null
+  }
+  const waiting = review.reviewThreads.nodes
+    .filter(thread => !thread.isResolved)
+    .map(thread => thread.comments.nodes.at(-1))
+    .filter((comment): comment is NonNullable<typeof comment> => comment !== undefined && (comment.author?.login ?? '') !== login)
+    .map((comment): ReviewThread => ({ author: comment.author?.login ?? 'someone', text: plainComment(comment.body), url: safeUrl(comment.url) }))
+  return {
+    key: pr.key,
+    url: pr.url,
+    decision: review.reviewDecision === 'APPROVED' ? 'approved' : review.reviewDecision === 'CHANGES_REQUESTED' ? 'changes' : 'pending',
+    changesBy: review.latestReviews.nodes.filter(one => one.state === 'CHANGES_REQUESTED').map(one => one.author?.login ?? 'someone'),
+    requested: review.reviewRequests.nodes.map(one => one.requestedReviewer?.login ?? one.requestedReviewer?.name ?? '').filter(Boolean),
+    waiting,
+  }
+}
+
+export async function loadSessionStats($: EngineInterface, settings: SidePaneSettings, prUrls: readonly string[], now: number): Promise<SessionStats> {
+  const errors: string[] = []
+  const wanted = [...new Map([...prUrls.join('\n').matchAll(PR_URL)].map(match => [`${match[1]}#${match[2]}`, { repo: match[1] ?? '', number: Number(match[2]) }])).values()]
+  const viewed = (await Promise.all(wanted.map(({ repo, number }) => viewPr($, repo, number, errors)))).filter((pr): pr is GhPr & { repo: string } => pr !== null)
+  const prs = viewed.map(pr => toTicketPr(pr, settings))
+  if (paneLocal.login === null && viewed.length > 0) {
+    const user = await runCli($, ['gh', 'api', 'user', '--jq', '.login'])
+    paneLocal.login = user?.exitCode === 0 ? user.stdout.trim() : ''
+  }
+  const reviews = (
+    await Promise.all(viewed.filter(pr => pr.state === 'OPEN').map(pr => loadReview($, toTicketPr(pr, settings), pr.repo, paneLocal.login ?? '', errors)))
+  ).filter((review): review is SessionReview => review !== null)
+  return { prs, reviews, errors, loadedAt: now }
 }
 
 const laneOf = (prs: readonly TicketPr[]): number | null => {
@@ -807,8 +896,8 @@ type IconName =
   | 'arrow'
   | 'eye'
   | 'dot'
-  | 'ring'
   | 'spark'
+  | 'activity'
   | 'slackColor'
   | 'gmail'
   | 'blank'
@@ -837,6 +926,7 @@ const STROKE: Partial<Record<IconName, string>> = {
   pie: '<circle cx="8" cy="8" r="6.2"/><path d="M8 1.8V8h6.2"/>',
   sessions: '<rect x="2" y="4.4" width="9.6" height="9.2" rx="1.6"/><path d="M5 2h7.4A1.6 1.6 0 0 1 14 3.6V11"/>',
   arrow: '<path d="M6 4l4 4-4 4"/>',
+  activity: '<path d="M1.4 8.6h3.1l1.9-4.4 3 7.8 2-4.6h3.2"/>',
   eye: '<path d="M1.4 8S3.8 3.4 8 3.4 14.6 8 14.6 8 12.2 12.6 8 12.6 1.4 8 1.4 8Z"/><circle cx="8" cy="8" r="2.1"/>',
 }
 
@@ -863,7 +953,6 @@ export function iconSvg(name: IconName, color: string): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16">${pieces.map((piece, i) => `<path d="${piece}" fill="${SLACK_COLORS[Math.floor(i / 2)] ?? color}"/>`).join('')}</svg>`
   }
   if (name === 'spark') return `${open}<path d="M8 1.6l1.5 4.9 4.9 1.5-4.9 1.5L8 14.4l-1.5-4.9L1.6 8l4.9-1.5Z" fill="${color}"/></svg>`
-  if (name === 'ring') return `${open}<circle cx="8" cy="8" r="3.4" fill="none" stroke="${color}" stroke-width="1.4"/></svg>`
   if (name === 'blank') return `${open}</svg>`
   const brand = BRAND[name]
   if (brand !== undefined) {
@@ -889,8 +978,8 @@ const GLYPH: Record<IconName, string> = {
   arrow: '›',
   eye: '◉',
   dot: '●',
-  ring: '○',
   spark: '✦',
+  activity: '∿',
   slackColor: '#',
   gmail: '✉',
   blank: ' ',
@@ -913,6 +1002,37 @@ const EMPTY_OPACITY = 0.45
 // A hairline across the pane, sized from its width in columns (a column is at least 7px on a graphical surface).
 const separatorSvg = (width: number) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 9" width="${width}" height="9"><line x1="0" y1="4.5" x2="${width}" y2="4.5" stroke="#8b949e" stroke-opacity=".35" stroke-width="1"/></svg>`
+
+// A headline that blinks: its whole drawing pulses, the browser animating it with no redraw.
+const blinking = (svg: string) =>
+  svg.replace(/^(<svg[^>]*>)/, '$1<g><animate attributeName="opacity" values="1;0.25;1" dur="1.4s" repeatCount="indefinite"/>').replace(/<\/svg>$/, '</g></svg>')
+
+// The pane's pet: a pixel snake on the footer row. It never sits still: it slithers across, fast while a turn
+// runs and at an amble while the session is idle, flicking its tongue.
+const SNAKE_CELL = 4
+const SNAKE_LENGTH = 9
+const SNAKE_COLORS = ['#56d364', '#3fb950', '#2ea043']
+
+export function snakeSvg(width: number, isFast: boolean): string {
+  const height = SNAKE_CELL * 6
+  const segments = Array.from({ length: SNAKE_LENGTH }, (_, i) => {
+    const x = (SNAKE_LENGTH - 1 - i) * SNAKE_CELL
+    const fill = i === 0 ? SNAKE_COLORS[0] : SNAKE_COLORS[1 + (i % 2)]
+    // Each segment rides the same wave a little behind the one before it.
+    const wave = `<animate attributeName="y" values="${SNAKE_CELL * 2};${SNAKE_CELL * 3};${SNAKE_CELL * 2};${SNAKE_CELL};${SNAKE_CELL * 2}" dur="${isFast ? 0.9 : 1.6}s" begin="${(-i * (isFast ? 0.1 : 0.18)).toFixed(2)}s" repeatCount="indefinite" calcMode="discrete"/>`
+    return `<rect x="${x}" y="${SNAKE_CELL * 2}" width="${SNAKE_CELL}" height="${SNAKE_CELL}" fill="${fill}">${wave}</rect>`
+  })
+  const head = (SNAKE_LENGTH - 1) * SNAKE_CELL
+  // The head rides the wave with the first segment; the tongue flicks as it goes.
+  const headWave = (offset: number) =>
+    `<animate attributeName="y" values="${SNAKE_CELL * 2 + offset};${SNAKE_CELL * 3 + offset};${SNAKE_CELL * 2 + offset};${SNAKE_CELL + offset};${SNAKE_CELL * 2 + offset}" dur="${isFast ? 0.9 : 1.6}s" repeatCount="indefinite" calcMode="discrete"/>`
+  const eye = `<rect x="${head + 2}" y="${SNAKE_CELL * 2 + 1}" width="1" height="1" fill="#0d1117">${headWave(1)}</rect>`
+  const tongue = `<rect x="${head + SNAKE_CELL}" y="${SNAKE_CELL * 2 + 1}" width="${SNAKE_CELL}" height="2" fill="#f85149">${headWave(1)}<animate attributeName="opacity" values="0;0;1;0" dur="${isFast ? 1.2 : 2.6}s" repeatCount="indefinite" calcMode="discrete"/></rect>`
+  const body = `${segments.join('')}${eye}${tongue}`
+  // Out at the right, back in at the left: fast while a turn runs, an idle amble otherwise.
+  const travel = `<animateTransform attributeName="transform" type="translate" values="${-head - SNAKE_CELL * 2} 0;${width} 0" dur="${(width / (isFast ? 40 : 14)).toFixed(1)}s" repeatCount="indefinite"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges"><g>${body}${travel}</g></svg>`
+}
 
 const faded = (svg: string) => svg.replace('<svg ', `<svg opacity="${EMPTY_OPACITY}" `)
 const MUTED = '#8b949e'
@@ -962,17 +1082,31 @@ export function tickerSvg(text: string, width: number, color: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 20" width="${width}" height="20"><g>${copies}<animateTransform attributeName="transform" type="translate" values="0 0;0 0;${isRtl ? step : -step} 0" keyTimes="0;${(TICKER_HOLD_S / total).toFixed(3)};1" dur="${total.toFixed(2)}s" repeatCount="indefinite"/></g></svg>`
 }
 
-const BAR_WIDTH = 232
 
-export function contextSvg(view: ContextView): string {
+// The prompt cache, as the model line says it: nothing while it is warm, a warning near the end, cold once it lapsed.
+export function cacheBadge(remaining: number | null, warnLead: number): { text: string; color: string } | null {
+  if (remaining === null || remaining > warnLead) return null
+  if (remaining <= 0) return { text: '❄ cache cold', color: '#f85149' }
+  const seconds = Math.ceil(remaining / 1000)
+  const left = remaining <= 2 * 60_000 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${Math.ceil(remaining / 60_000)}m`
+  return { text: `⚠ cache ${left}`, color: '#F0883E' }
+}
+
+// A model id as people say it: claude-opus-5-5 is Opus 5.5.
+export const modelName = (id: string) => {
+  const match = /claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id)
+  return match?.[1] ? `${match[1].charAt(0).toUpperCase()}${match[1].slice(1)} ${match[2]}${match[3] ? `.${match[3]}` : ''}` : id.replace(/\[.*\]$/, '')
+}
+
+export function contextSvg(view: ContextView, barWidth: number): string {
   let x = 0
   const parts = view.parts.map(part => {
-    const width = Math.max(0, Math.min(BAR_WIDTH - x, (part.tokens / Math.max(1, view.window)) * BAR_WIDTH))
+    const width = Math.max(0, Math.min(barWidth - x, (part.tokens / Math.max(1, view.window)) * barWidth))
     const rect = `<rect x="${x.toFixed(1)}" y="0" width="${width.toFixed(1)}" height="6" fill="${part.color}"/>`
     x += width
     return rect
   })
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${BAR_WIDTH} 6" width="${BAR_WIDTH}" height="6"><clipPath id="r"><rect width="${BAR_WIDTH}" height="6" rx="3"/></clipPath><g clip-path="url(#r)"><rect width="${BAR_WIDTH}" height="6" fill="#3d3d3d"/>${parts.join('')}</g></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${barWidth} 6" width="${barWidth}" height="6"><clipPath id="r"><rect width="${barWidth}" height="6" rx="3"/></clipPath><g clip-path="url(#r)"><rect width="${barWidth}" height="6" fill="#3d3d3d"/>${parts.join('')}</g></svg>`
 }
 
 // Category colors for the context bar, in the order /context lists the used rows.
@@ -990,18 +1124,8 @@ export type SessionLine = {
   prKey: string | null
   prUrl: string | null
   gist: string
-  onOpen: () => void
-}
-
-export type ReviewLine = {
-  key: string
-  label: string
-  url: string
-  title: string
-  author: string
-  // How long it has waited on you, colored by that wait.
-  age: string
-  color: string
+  // A subagent has no session to open.
+  onOpen: (() => void) | null
 }
 
 export type SlackLine = {
@@ -1017,15 +1141,26 @@ export type SlackLine = {
 export type SidePaneParts = {
   columns: number
   tldr: string | null
+  // What the session is doing in one line (the task in hand, else its state), in its state's color.
+  status: { text: string; color: string }
+  // The model, its effort and fast mode, as the app last reported them; null until it has.
+  mode: { model: string; effort: string | null; fast: string | null } | null
+  // The prompt cache's state; null before the first request.
+  cache: { text: string; color: string } | null
   ticketId: string | null
   ticket: TicketView | null
   sessions: SessionLine[]
   needYou: number
-  reviews: ReviewLine[]
+  // Where review stands on each of the session's open PRs.
+  reviews: SessionReview[]
   sessionsOffset: number
   sessionsShown: number
   isCollapsed: (section: string) => boolean
   onToggleSection: (section: string) => void
+  onFoldAll: (sections: readonly string[], isCollapsed: boolean) => void
+  // Sections whose status just changed, or Code Review while the session watches a PR.
+  blinking: readonly string[]
+  isWorking: boolean
   onScrollSessions: (by: number) => void
   slack: SlackLine[]
   slackError: string | null
@@ -1039,7 +1174,16 @@ export type SidePaneParts = {
   onRefresh: () => void
   isLoading: boolean
   clock: (at: number) => string
+  // The pane's room in rows, how far its body is scrolled, and how to move it.
+  rows: number
+  offset: number
+  onScroll: (by: number) => void
+  onBodyRows: (maxOffset: number) => void
 }
+
+// Below this many rows of room the footer is not pinned; the ▲ ▼ buttons move the body by this much.
+const STICKY_MIN_ROWS = 8
+const SCROLL_STEP_ROWS = 6
 
 const COLOR = {
   tldr: ACCENT,
@@ -1058,16 +1202,32 @@ const COLOR = {
 }
 
 const PR_COLOR: Record<TicketPr['state'], string> = { open: '#3fb950', draft: MUTED, merged: '#a371f7' }
+const REVIEW_COLOR: Record<SessionReview['decision'], string> = { approved: '#3fb950', changes: '#f85149', pending: MUTED }
+// A PR shows its first few threads waiting on you; the rest are counted.
+const REVIEW_THREADS_SHOWN = 4
 const CI_COLOR: Record<CiState, string> = { passing: '#3fb950', failing: '#f85149', running: '#D4A72C', none: MUTED }
 
-export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElement {
-  const { Box, Text, Button, Link, Svg } = ui
-  const { ticket } = parts
+// Full-size triangles: the small ones read as specks beside a title. U+FE0E keeps ▶ a glyph, never an emoji.
+export const CARET_CLOSED = '▶\uFE0E'
+export const CARET_OPEN = '▼'
 
-  const slot = (key: string, icon: IconName, color: string, alt: string, isFaded = false) => (
+type PaneFold = Pick<SidePaneParts, 'isCollapsed' | 'onToggleSection' | 'blinking'>
+
+// The drawing both panes share: the line grid, faded and blinking headlines, carets, lanes and links.
+function paneKit(ui: PaneElements, parts: PaneFold) {
+  const { Box, Text, Button, Link, Svg } = ui
+
+  const linkOrText = (url: string | null, label: string) =>
+    url !== null ? <Link href={url} label={label} /> : <Text wrap="truncate-end">{label}</Text>
+
+  const plainButton = (key: string, label: string, onPress: () => void, isDimmed = true) => (
+    <Button key={key} plain dimColor={isDimmed} label={label} onPress={onPress} />
+  )
+
+  const slot = (key: string, icon: IconName, color: string, alt: string, isFaded = false, isBlinking = false) => (
     <Box key={`${key}-icon`} flexShrink={0}>
       {Svg ? (
-        <Svg source={isFaded ? faded(iconSvg(icon, color)) : iconSvg(icon, color)} alt={alt} width={16} height={16} />
+        <Svg source={(isBlinking ? blinking : isFaded ? faded : String)(iconSvg(icon, color))} alt={alt} width={16} height={16} isInteractive={isBlinking} />
       ) : (
         <Text color={color} dimColor={isFaded}>
           {GLYPH[icon]}
@@ -1078,9 +1238,9 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
 
   // Every line is the same grid: a 16px icon slot, the content, and an optional value on the right.
   // The content gives way (minWidth 0) so long text truncates instead of pushing the right value out.
-  const line = (key: string, icon: IconName, color: string, alt: string, content: RenderNode, right?: RenderNode | RenderNode[], isFaded = false) => (
+  const line = (key: string, icon: IconName, color: string, alt: string, content: RenderNode, right?: RenderNode | RenderNode[], isFaded = false, isBlinking = false) => (
     <Box key={key} flexDirection="row" gap={1} alignItems="flex-start">
-      {slot(key, icon, color, alt, isFaded)}
+      {slot(key, icon, color, alt, isFaded, isBlinking)}
       <Box key={`${key}-body`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
         {content}
       </Box>
@@ -1106,10 +1266,17 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
     )
 
   // Every section with rows collapses from a caret right after its title; `count` rides on the caret.
-  const section = (key: string, title: string, icon: IconName, color: string, rows: RenderNode[], right?: RenderNode | RenderNode[], count?: number) => {
+  // `foldable` gathers them for the hide all button.
+  const foldable: string[] = []
+  // About how many rows the sections drawn so far take: a headline, its margin and each open row.
+  let rowsDrawn = 0
+  const section = (key: string, title: string, icon: IconName, color: string, rows: RenderNode[], right?: RenderNode | RenderNode[], count?: number, isFoldable = true) => {
     const isEmpty = rows.length === 0
-    const isCollapsed = !isEmpty && parts.isCollapsed(key)
-    const caret = isEmpty ? undefined : plainButton(`${key}-toggle`, `${isCollapsed ? '▸' : '▾'}${count === undefined ? '' : ` ${count}`}`, () => parts.onToggleSection(key))
+    const isCollapsed = isFoldable && !isEmpty && parts.isCollapsed(key)
+    const isBlinking = parts.blinking.includes(key)
+    if (isFoldable && !isEmpty) foldable.push(key)
+    rowsDrawn += 2 + (isCollapsed ? 0 : rows.length)
+    const caret = isEmpty || !isFoldable ? undefined : plainButton(`${key}-toggle`, `${isCollapsed ? CARET_CLOSED : CARET_OPEN}${count === undefined ? '' : ` ${count}`}`, () => parts.onToggleSection(key))
     return (
     <Box key={key} flexDirection="column" marginTop={1}>
       {line(
@@ -1119,16 +1286,23 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
         isEmpty ? `${title}: nothing yet` : title,
         <Box key={`${key}-title-row`} flexDirection="row" gap={1} alignItems="center">
           {Svg ? (
-            <Svg source={isEmpty ? faded(titleSvg(title, color)) : titleSvg(title, color)} alt={title} width={Math.ceil(title.length * 8.6) + 4} height={20} />
+            <Svg
+              source={(isBlinking ? blinking : isEmpty ? faded : String)(titleSvg(title, color))}
+              alt={title}
+              width={Math.ceil(title.length * 8.6) + 4}
+              height={20}
+              isInteractive={isBlinking}
+            />
           ) : (
-            <Text color={color} bold dimColor={isEmpty}>
+            <Text color={color} bold dimColor={isEmpty && !isBlinking} inverse={isBlinking}>
               {title}
             </Text>
           )}
           {caret}
         </Box>,
         right,
-        isEmpty,
+        isEmpty && !isBlinking,
+        isBlinking,
       )}
       {!isCollapsed && (
         // Rows sit one step in, their icons under the headline's text.
@@ -1140,17 +1314,64 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
     )
   }
 
+  // A session: a dot and its age in its status color, the name that opens it, then its PR and task, dim.
+  const sessionRows = (session: SessionLine) => [
+    line(
+      `tp-session-${session.key}`,
+      session.onOpen === null ? 'spark' : 'dot',
+      session.color,
+      session.state,
+      session.onOpen === null ? <Text wrap="truncate-end">{session.name}</Text> : <Button key={`tp-session-open-${session.key}`} plain label={session.name} onPress={session.onOpen} />,
+      <Text color={session.color}>{session.state}</Text>,
+    ),
+    ...(session.gist === '' && session.prUrl === null
+      ? []
+      : [
+          line(
+            `tp-session-${session.key}-gist`,
+            'blank',
+            MUTED,
+            'session detail',
+            <Box key={`tp-session-${session.key}-gist-row`} flexDirection="row" gap={1} minWidth={0}>
+              {session.prUrl !== null && <Link href={session.prUrl} label={session.prKey ?? 'PR'} />}
+              {session.gist !== '' && dim(session.gist)}
+            </Box>,
+          ),
+        ]),
+  ]
+
+  // A pull request: its link and state, its title, and while open its CI and review.
+  const prRows = (pr: TicketPr, right?: RenderNode) => [
+    line(`tp-pr-${pr.key}`, 'pr', PR_COLOR[pr.state], `${pr.state} pull request`, <Link href={pr.url} label={pr.key} />, right ?? <Text dimColor>{pr.state}</Text>),
+    line(`tp-pr-${pr.key}-title`, 'blank', MUTED, 'pull request title', dim(pr.title)),
+    ...(pr.state === 'merged'
+      ? []
+      : [
+          line(
+            `tp-pr-${pr.key}-ci`,
+            'blank',
+            MUTED,
+            'checks',
+            <Text wrap="truncate-end">
+              <Text color={CI_COLOR[pr.ci]}>{pr.ci === 'none' ? 'no CI' : `CI ${pr.ci}`}</Text>
+              <Text dimColor>{` · ${pr.review}`}</Text>
+            </Text>,
+          ),
+        ]),
+  ]
+
+  return { slot, line, dim, lane, section, linkOrText, plainButton, foldable, sessionRows, prRows, rowsDrawn: () => rowsDrawn }
+}
+
+export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElement {
+  const { Box, Text, Button, Link, Svg } = ui
+  const { ticket } = parts
+  const { slot, line, dim, lane, section, linkOrText, plainButton, foldable, sessionRows, prRows, rowsDrawn } = paneKit(ui, parts)
+
   // The room a message line has beside its indent, icon slot and time, in px.
   const messageWidth = parts.columns * 7 - 104
   const message = (text: string) =>
     Svg && text.length * TICKER_PX_PER_CHAR > messageWidth ? <Svg source={tickerSvg(text, messageWidth, MUTED)} alt={text} width={messageWidth} height={20} isInteractive /> : dim(text)
-
-  const linkOrText = (url: string | null, label: string) =>
-    url !== null ? <Link href={url} label={label} /> : <Text wrap="truncate-end">{label}</Text>
-
-  const plainButton = (key: string, label: string, onPress: () => void, isDimmed = true) => (
-    <Button key={key} plain dimColor={isDimmed} label={label} onPress={onPress} />
-  )
 
   // Every section keeps its headline when its source has nothing, so the pane's shape never shifts.
   const prs = ticket?.prs ?? []
@@ -1196,31 +1417,7 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
       'Pull requests',
       'github',
       COLOR.prs,
-      prs.flatMap(pr => [
-        line(
-          `tp-pr-${pr.key}`,
-          'pr',
-          PR_COLOR[pr.state],
-          `${pr.state} pull request`,
-          <Link href={pr.url} label={pr.key} />,
-          pr.isConfig ? lane(`tp-pr-lane-${pr.key}`, ['Build', 'Review', 'Merged'], pr.lane) : <Text dimColor>{pr.state}</Text>,
-        ),
-        line(`tp-pr-${pr.key}-title`, 'blank', MUTED, 'pull request title', dim(pr.title)),
-        ...(pr.state === 'merged'
-          ? []
-          : [
-              line(
-                `tp-pr-${pr.key}-ci`,
-                'blank',
-                MUTED,
-                'checks',
-                <Text wrap="truncate-end">
-                  <Text color={CI_COLOR[pr.ci]}>{pr.ci === 'none' ? 'no CI' : `CI ${pr.ci}`}</Text>
-                  <Text dimColor>{` · ${pr.review}`}</Text>
-                </Text>,
-              ),
-            ]),
-      ]),
+      prs.flatMap(pr => prRows(pr, pr.isConfig ? lane(`tp-pr-lane-${pr.key}`, ['Build', 'Review', 'Merged'], pr.lane) : undefined)),
       ticket === null || ticket.codeLane === null ? undefined : lane('tp-code-lane', ['Build', 'Review', 'Merged'], ticket.codeLane),
     ),
     section(
@@ -1301,7 +1498,8 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
     section('tp-gmail', 'Gmail', 'gmail', COLOR.gmail, []),
   ]
 
-  // Code Review: the PRs waiting on your review, collapsible like Sessions.
+  // Code Review: where review stands on each of the session's open PRs, and the threads that wait on you.
+  const needYou = parts.reviews.reduce((sum, review) => sum + review.waiting.length + (review.decision === 'changes' ? 1 : 0), 0)
   bottom.push(
     section(
       'tp-review',
@@ -1309,10 +1507,39 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
       'eye',
       COLOR.review,
       parts.reviews.flatMap(review => [
-            line(`tp-review-${review.key}`, 'pr', COLOR.review, 'pull request to review', <Link href={review.url} label={review.label} />, <Text color={review.color}>{review.age}</Text>),
-            line(`tp-review-${review.key}-title`, 'blank', MUTED, 'pull request title', dim(`${review.title} · ${review.author}`)),
-          ]),
-      undefined,
+        line(
+          `tp-review-${review.key}`,
+          'pr',
+          REVIEW_COLOR[review.decision],
+          'pull request',
+          <Link href={review.url} label={review.key} />,
+          <Text color={REVIEW_COLOR[review.decision]}>
+            {review.decision === 'changes'
+              ? `changes requested${review.changesBy.length === 0 ? '' : ` · ${review.changesBy.join(', ')}`}`
+              : review.decision === 'approved'
+                ? 'approved'
+                : 'waiting for review'}
+          </Text>,
+        ),
+        ...review.waiting.slice(0, REVIEW_THREADS_SHOWN).map((thread, i) =>
+          line(
+            `tp-review-${review.key}-thread-${i}`,
+            'blank',
+            MUTED,
+            'comment waiting on you',
+            <Text wrap="truncate-end">
+              <Text color={COLOR.drafts}>{`${thread.author} `}</Text>
+              <Text dimColor>{thread.text}</Text>
+            </Text>,
+            thread.url === null ? undefined : <Link href={thread.url} label="reply" />,
+          ),
+        ),
+        ...(review.waiting.length > REVIEW_THREADS_SHOWN
+          ? [line(`tp-review-${review.key}-more`, 'blank', MUTED, 'more comments', dim(`+${review.waiting.length - REVIEW_THREADS_SHOWN} more comments`))]
+          : []),
+        ...(review.requested.length === 0 ? [] : [line(`tp-review-${review.key}-requested`, 'blank', MUTED, 'pending reviewers', dim(`waiting on ${review.requested.join(', ')}`))]),
+      ]),
+      needYou > 0 ? <Text color={COLOR.experiment}>{`${needYou} need you`}</Text> : undefined,
       parts.reviews.length,
     ),
   )
@@ -1322,36 +1549,13 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
   bottom.push(
     section(
       'tp-sessions',
-      'Sessions',
+      'Related Sessions',
       'sessions',
       COLOR.sessions,
       parts.sessions.length === 0
         ? []
         : [
-              ...parts.sessions.slice(parts.sessionsOffset, parts.sessionsOffset + parts.sessionsShown).flatMap(session => [
-                line(
-                  `tp-session-${session.key}`,
-                  'dot',
-                  session.color,
-                  session.state,
-                  <Button key={`tp-session-open-${session.key}`} plain label={session.name} onPress={session.onOpen} />,
-                  <Text color={session.color}>{session.state}</Text>,
-                ),
-                ...(session.gist === '' && session.prUrl === null
-                  ? []
-                  : [
-                      line(
-                        `tp-session-${session.key}-gist`,
-                        'blank',
-                        MUTED,
-                        'session detail',
-                        <Box key={`tp-session-${session.key}-gist-row`} flexDirection="row" gap={1} minWidth={0}>
-                          {session.prUrl !== null && <Link href={session.prUrl} label={session.prKey ?? 'PR'} />}
-                          {session.gist !== '' && dim(session.gist)}
-                        </Box>,
-                      ),
-                    ]),
-              ]),
+              ...parts.sessions.slice(parts.sessionsOffset, parts.sessionsOffset + parts.sessionsShown).flatMap(sessionRows),
               ...(parts.sessionsOffset > 0 || below > 0
                 ? [
                     line(
@@ -1372,8 +1576,36 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
     ),
   )
 
-  // Context closes the pane, above the footer's Keep warm.
-  bottom.push(
+  // A section after a separator brings its own margin; a bare line (the TL;DR) asks for one below it.
+  const separator = (key: string, isSpacedBelow = false) => (
+    <Box key={key} marginTop={1} marginBottom={isSpacedBelow ? 1 : 0} overflow="hidden">
+      {Svg ? <Svg source={separatorSvg(parts.columns * 7)} alt="separator" width={parts.columns * 7} height={9} /> : <Text dimColor>{'─'.repeat(parts.columns)}</Text>}
+    </Box>
+  )
+
+  // A row with no icon slot, flush with the bars under the headline's text, and an optional value on the right.
+  const flush = (key: string, content: RenderNode, right?: RenderNode) => (
+    <Box key={key} flexDirection="row" gap={1} alignItems="flex-start">
+      <Box key={`${key}-body`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+        {content}
+      </Box>
+      {right !== undefined && (
+        <Box key={`${key}-right`} flexShrink={0}>
+          {right}
+        </Box>
+      )}
+    </Box>
+  )
+
+  // The bars skip the icon slot: they start under the headline's text and run to the right edge.
+  const barWidth = Math.max(160, parts.columns * 7 - 40)
+
+  // The rows above the footer: the TL;DR as it wraps, the sections, the separator, any problems.
+  const tldrRows = parts.tldr === null ? 1 : Math.ceil((parts.tldr.length + 7) / Math.max(20, parts.columns - 4))
+  const bodyRows = rowsDrawn() + 4 + tldrRows + 2 + (ticket?.errors.length ?? 0)
+
+  // Context opens the footer, above Keep warm and the snake.
+  const contextSection = (
     section(
       'tp-context',
       'Context',
@@ -1382,30 +1614,60 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
       view === null
         ? []
         : [
-            line('tp-context-used', 'blank', MUTED, 'context used', <Text bold>{`${view.percent}% used`}</Text>, <Text dimColor>{`${fmtK(view.tokens)} / ${fmtK(view.window)}`}</Text>),
-            line(
-              'tp-context-bar',
-              'blank',
-              MUTED,
-              'context bar',
-              Svg ? (
-                <Svg source={contextSvg(view)} alt={`${view.percent}% of the context used`} width={BAR_WIDTH} height={6} />
+            flush('tp-context-used', <Text bold>{`${view.percent}% used`}</Text>, <Text dimColor>{`${fmtK(view.tokens)} / ${fmtK(view.window)}`}</Text>),
+            <Box key="tp-context-bar">
+              {Svg ? (
+                <Svg source={contextSvg(view, barWidth)} alt={`${view.percent}% of the context used`} width={barWidth} height={6} />
               ) : (
                 <Text>
                   <Text color="blue">{'█'.repeat(Math.round(view.percent / 4))}</Text>
                   <Text dimColor>{'░'.repeat(25 - Math.round(view.percent / 4))}</Text>
                 </Text>
-              ),
-            ),
+              )}
+            </Box>,
+            ...(parts.mode === null
+              ? []
+              : [
+                  flush(
+                    'tp-context-mode',
+                    <Text wrap="truncate-end">
+                      <Text>{modelName(parts.mode.model)}</Text>
+                      {parts.mode.effort !== null && <Text dimColor>{` · ${parts.mode.effort}`}</Text>}
+                      {parts.mode.fast !== null && <Text color={parts.mode.fast === 'on' ? ACCENT : MUTED}>{` · ⚡ fast ${parts.mode.fast}`}</Text>}
+                    </Text>,
+                    parts.cache === null ? undefined : <Text color={parts.cache.color}>{parts.cache.text}</Text>,
+                  ),
+                ]),
           ],
-    ),
+      undefined,
+      undefined,
+      false,
+    )
   )
 
   const problems = ticket?.errors.filter(error => !error.startsWith('Slack')) ?? []
   const isReading = parts.tldr === null && parts.ticketId !== null && (parts.isLoading || ticket === null)
+  const isAnyOpen = foldable.some(key => !parts.isCollapsed(key))
+  const foldAll =
+    foldable.length === 0 ? undefined : plainButton('tp-fold-all', isAnyOpen ? 'hide all' : 'show all', () => parts.onFoldAll(foldable, isAnyOpen))
+  const snakeWidth = Math.max(48, parts.columns * 7 - 190 - (ticket === null ? 0 : 120))
 
-  return (
-    <Box flexDirection="column">
+  const head = (
+    <>
+      {line(
+        'tp-status',
+        'activity',
+        parts.status.color,
+        'status',
+        <Text wrap="truncate-end">
+          <Text bold color={parts.status.color}>
+            Status
+          </Text>
+          {` ${parts.status.text}`}
+        </Text>,
+        foldAll,
+      )}
+      {separator('tp-status-separator', true)}
       {parts.tldr !== null &&
         line(
           'tp-tldr',
@@ -1421,32 +1683,69 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
         )}
       {isReading && line('tp-tldr', 'spark', COLOR.tldr, 'loading', dim(`Reading ${parts.ticketId}…`))}
       {sections}
-      <Box key="tp-separator" marginTop={1} overflow="hidden">
-        {Svg ? (
-          <Svg source={separatorSvg(parts.columns * 7)} alt="separator" width={parts.columns * 7} height={9} />
-        ) : (
-          <Text dimColor>{'─'.repeat(parts.columns)}</Text>
-        )}
-      </Box>
+      {separator('tp-separator')}
       {bottom}
       {problems.map((error, i) => (
         <Box key={`tp-problem-${i}`} marginTop={i === 0 ? 1 : 0}>
           {line(`tp-problem-line-${i}`, 'warning', COLOR.drafts, 'problem', <Text color={COLOR.drafts} wrap="wrap">{error}</Text>)}
         </Box>
       ))}
-      <Box key="tp-foot" flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap={1} marginTop={1}>
-        {ticket === null ? (
-          <Text dimColor>{parts.isLoading ? 'Loading…' : ''}</Text>
-        ) : (
-          plainButton('tp-refresh', parts.isLoading ? 'Refreshing…' : `Updated ${parts.clock(ticket.loadedAt)}`, parts.onRefresh)
-        )}
-        <Box key="tp-foot-actions" flexDirection="row" columnGap={2}>
+    </>
+  )
+  const footer = (
+    <>
+      {separator('tp-footer-separator')}
+      {contextSection}
+      <Box key="tp-foot" flexDirection="row" alignItems="center" columnGap={2} marginTop={1}>
+        {ticket !== null && plainButton('tp-refresh', parts.isLoading ? 'Refreshing…' : `Updated ${parts.clock(ticket.loadedAt)}`, parts.onRefresh)}
+        {ticket === null && parts.isLoading && <Text dimColor>Loading…</Text>}
+        <Box key="tp-snake" flexGrow={1} flexShrink={1} minWidth={0}>
+          {Svg && (
+            <Svg source={snakeSvg(snakeWidth, parts.isWorking)} alt={parts.isWorking ? 'a pixel snake slithers by' : 'a pixel snake rests'} width={snakeWidth} height={24} isInteractive />
+          )}
+        </Box>
+        <Box key="tp-foot-actions" flexDirection="row" columnGap={2} flexShrink={0}>
           <Button key="tp-keep-warm" plain onPress={parts.onKeepWarm}>
             <Text color={parts.warmFor === null ? MUTED : COLOR.prs}>{parts.warmFor === null ? '○' : '●'}</Text>
             {parts.warmFor === null ? ' Keep warm' : ` Warm · ${parts.warmFor}`}
           </Button>
           {plainButton('tp-kiss', 'KISS', parts.onKiss, parts.isKissDimmed)}
         </Box>
+      </Box>
+    </>
+  )
+
+  // A pane too short for a pinned footer draws one long column the engine scrolls.
+  // The separator, Context, and the button row.
+  const footerRows = 2 + (parts.context === null ? 2 : parts.mode === null ? 5 : 6) + 2
+  const roomRows = parts.rows - footerRows
+  if (roomRows < STICKY_MIN_ROWS) {
+    return (
+      <Box flexDirection="column">
+        {head}
+        {footer}
+      </Box>
+    )
+  }
+  // The footer stays pinned: the pane is one screen tall, and the body above it slides inside its own clip.
+  const maxOffset = Math.max(0, bodyRows - roomRows + 2)
+  parts.onBodyRows(maxOffset)
+  const offset = Math.min(parts.offset, maxOffset)
+  return (
+    <Box flexDirection="column" height={parts.rows}>
+      <Box key="tp-body" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+        <Box key="tp-body-inner" flexDirection="column" flexShrink={0} marginTop={-offset}>
+          {head}
+        </Box>
+      </Box>
+      {maxOffset > 0 && (
+        <Box key="tp-scroll" flexDirection="row" justifyContent="flex-end" columnGap={2}>
+          {offset > 0 && plainButton('tp-scroll-up', '▲', () => parts.onScroll(-SCROLL_STEP_ROWS))}
+          {offset < maxOffset && plainButton('tp-scroll-down', '▼', () => parts.onScroll(SCROLL_STEP_ROWS))}
+        </Box>
+      )}
+      <Box key="tp-footer" flexDirection="column" flexShrink={0}>
+        {footer}
       </Box>
     </Box>
   )

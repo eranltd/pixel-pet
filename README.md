@@ -2,20 +2,26 @@
 
 <p align="center"><img src="docs/images/bit-animated.svg" width="208" alt="Bit, an animated pixel puppy"></p>
 
-A Claude Code mod with two layouts. **The side pane** puts the session's ticket in a pane beside the chat, with your Slack, reviews, sessions and context under it. **The band** is the original: Bit, a 26×18 pixel dog, above the prompt, with the plan, the sessions and the inboxes around him.
+A Claude Code mod with two layouts. **The side pane** puts the session's ticket in a pane beside the chat, with its status, your Slack, its code review, its related sessions and its context around it. **The band** is the original: Bit, a 26×18 pixel dog, above the prompt, with the plan, the sessions and the inboxes around him.
 
 ## The side pane
 
 <p align="center">
-  <img src="docs/images/side-pane-collapsed.png" width="400" alt="The side pane with every section collapsed: the TL;DR, then one headline per section, the PR lane on the Pull requests line, a separator, and Slack, Gmail, Code Review, Sessions and Context">
-  <img src="docs/images/side-pane-open.png" width="400" alt="The side pane with every section open: the ticket and its next step, an unsaved config draft, two PRs with their lanes, an experiment with its variants, Figma and Notion links, a related ticket, the people on it, then Slack messages, PRs waiting on review, sessions with their age, and the context bar">
+  <img src="docs/images/side-pane-collapsed.png" width="400" alt="The side pane with every section collapsed: the status line, the TL;DR, one headline per section, a separator, Slack, Gmail, Code Review and Related Sessions, then the sticky Context footer">
+  <img src="docs/images/side-pane-open.png" width="400" alt="The side pane with every section open: the status line and TL;DR, the ticket and its next step, an unsaved config draft, two PRs with their lanes, an experiment with its variants, Figma and Notion links, a related ticket, the people on it, then Slack messages, the session's code review, its related sessions and running agents, and the Context footer with the model and the cache">
 </p>
 
 <sub>Drawn from the pane's own tree with the demo on. Every name, ticket and message is made up. Left: every section collapsed. Right: every section open.</sub>
 
-Set one option to switch to it, `"layout": "side-pane"` (see [Side pane options](#side-pane-options)). The pane opens beside the chat in every new session, and reads the ticket from the branch name (`abc-123-new-checkout` is `ABC-123`) or else from the session title.
+Set one option to switch to it, `"layout": "side-pane"` (see [Side pane options](#side-pane-options)). The pane opens beside the chat in every new session. It reads the ticket from the branch name (`abc-123-new-checkout` is `ABC-123`), or else from the session title. The tab title is the session's state at a glance: `🟢 PET-42 · 2/5` while it runs, `🟠` while it waits on you, `⚪` while it idles.
 
-- **TL;DR**: the first line, one sentence on what the session is doing and where it stands. Haiku writes it from the title, the ticket, the plan and the last few messages, at most once a minute.
+On top:
+
+- **Status**: one line on what the session does now: the task in hand, `Running · building`, `Waiting on you` or `Idle · 12m`. On the right, **hide all** folds every section and **show all** opens them again.
+- **TL;DR**: one sentence on what the session does and where it stands. Haiku writes it from the title, the ticket, the plan and the last few messages, at most once a minute.
+
+The ticket:
+
 - **Ticket**: the Linear ticket, its own one-sentence TL;DR, and the next step in bold: `Fix CI on #412: lint`, `#412 waits for review`, `Launch exp_pane_1`, `All shipped`.
 - **Unsaved config drafts**: drafts saved in your config dashboard and not applied yet, with the hours they have left.
 - **Pull requests**: the ticket's PRs, with CI (the newest run of each check) and review. A lane track shows Build › Review › Merged.
@@ -23,17 +29,21 @@ Set one option to switch to it, `"layout": "side-pane"` (see [Side pane options]
 - **Design**, **Docs**, **Related tickets**: the Figma, Notion and Claude links on the ticket and its PRs, and its linked tickets.
 - **People**: who wrote the ticket, who has it, and the designer, each a link to their Slack DM.
 
-Under the separator, what waits on you across sessions:
+Under the separator, what waits on you:
 
-- **Slack**: your DMs and mentions since your last reply. Each shows its latest message and the time it came; a long one scrolls past like a ticker. ✓ clears one, "clear all" clears them all.
+- **Slack**: your DMs and mentions since your last reply. Each shows its latest message and the time it came. A long one scrolls past like a ticker. ✓ clears one, "clear all" clears them all.
 - **Gmail**: a headline for now.
-- **Code Review**: the PRs that ask for your review, and how long each has waited: green under a day, orange under three, red after.
-- **Sessions**: the other sessions on this machine, each with its age in days. Green runs or merged, orange waits on you, red idles.
-- **Context**: the context window used, as a number and a bar.
+- **Code Review**: review on this session's own PRs (the branch's, and each one it opened): changes requested, the threads that wait on your reply with a **reply** link, and who the review waits on. The headline counts what needs you.
+- **Related Sessions**: only the sessions that belong with this one: the ones the desktop app linked to it (the session that started it, and the ones it started), and the ones on the same ticket. Each shows its age in days: green runs or merged, orange waits on you, red idles. This session's subagents still at work follow, marked ✦.
 
-Every section with rows folds from the caret beside its title, and Bit remembers it. Code Review and Sessions start folded. A section with nothing to show keeps its headline, faded. At the bottom, **Keep warm** sends one tiny request just before the prompt cache expires, so it stays warm, and **KISS** explains the topic with the [kiss](https://github.com/eranltd/kiss) skill.
+The footer stays at the bottom while the rest scrolls:
 
-Claude can open the pane too: ask it to "open the session pane". Its `open_session_pane` tool refreshes the pane and returns what it shows as text; `demo: true` fills it with made-up data for screenshots. In a terminal, `/ticket` does the same.
+- **Context**: the share of the context window used, the tokens, and a bar. Under it, the model, its effort and fast mode. On the right, a warning when the prompt cache is about to expire, and `cache cold` once it has.
+- Last, when the pane last refreshed, a pixel snake that slithers (faster while Claude works), **Keep warm**, which sends one tiny request just before the cache expires, and **KISS**, which explains the topic with the [kiss](https://github.com/eranltd/kiss) skill.
+
+Every section folds from the caret beside its title, and Bit remembers it. Code Review and Related Sessions start folded. A section with nothing to show keeps its headline, faded. A section blinks for a few seconds when something in it changes that is worth a look: a session that starts to wait on you, a new review thread, CI that turns, a new draft. Code Review blinks for as long as the session babysits its PR or the app's auto-fix watches it.
+
+Claude can open the pane too: ask it to "open the session pane". Its `open_session_pane` tool refreshes the pane and returns what it shows as text. `demo: true` fills it with made-up data for screenshots, and `demo: false` brings the real data back. In a terminal, `/ticket` does the same.
 
 ## The band
 
