@@ -2,7 +2,23 @@
 
 <p align="center"><img src="docs/images/bit-animated.svg" width="208" alt="Bit, an animated pixel puppy"></p>
 
-A Claude Code mod with two layouts. **The side pane** puts the session's ticket in a pane beside the chat, with its status, your Slack, its code review, its related sessions and its context around it. **The band** is the original: Bit, a 26×18 pixel dog, above the prompt, with the plan, the sessions and the inboxes around him.
+> **TL;DR:** Bit has a new, better variant, **the side pane**: the session's ticket, status, code review and related sessions in a pane beside the chat. **[Jump to the side pane ↓](#the-side-pane)**
+
+A Claude Code mod with two layouts. **The band** is the original: Bit, a 26×18 pixel dog, above the prompt, with the plan, the sessions and the inboxes around him. **The side pane** is the new one.
+
+## The band
+
+![A Claude Code session with the band above the prompt: Bit top-left, the Sessions board, the plan with its progress bar, Slack rows and the context line](docs/images/app-demo.png)
+
+<sub>A mock of a running session with `/bit demo` on. Every name, session and message is made up; the dog is the mod's own sprite.</sub>
+
+<details><summary>The band up close</summary>
+
+![The band with demo data](docs/images/band-demo.png)
+
+</details>
+
+The default layout draws a 26×18 pixel dog above the prompt. Bit reacts to the session: he works, sleeps, hops when a task passes, droops when a check fails, and asks for you when a tool call waits on permission. Around him the band shows the plan and its progress, the other sessions on this machine, the GitHub and Slack inboxes, the context budget, and one favorite action button.
 
 ## The side pane
 
@@ -44,20 +60,6 @@ The footer stays at the bottom while the rest scrolls:
 Every section folds from the caret beside its title, and Bit remembers it. Code Review and Related Sessions start folded. A section with nothing to show keeps its headline, faded. A section blinks for a few seconds when something in it changes that is worth a look: a session that starts to wait on you, a new review thread, CI that turns, a new draft. Code Review blinks for as long as the session babysits its PR or the app's auto-fix watches it.
 
 Claude can open the pane too: ask it to "open the session pane". Its `open_session_pane` tool refreshes the pane and returns what it shows as text. `demo: true` fills it with made-up data for screenshots, and `demo: false` brings the real data back. In a terminal, `/ticket` does the same.
-
-## The band
-
-![A Claude Code session with the band above the prompt: Bit top-left, the Sessions board, the plan with its progress bar, Slack rows and the context line](docs/images/app-demo.png)
-
-<sub>A mock of a running session with `/bit demo` on. Every name, session and message is made up; the dog is the mod's own sprite.</sub>
-
-<details><summary>The band up close</summary>
-
-![The band with demo data](docs/images/band-demo.png)
-
-</details>
-
-The default layout draws a 26×18 pixel dog above the prompt. Bit reacts to the session: he works, sleeps, hops when a task passes, droops when a check fails, and asks for you when a tool call waits on permission. Around him the band shows the plan and its progress, the other sessions on this machine, the GitHub and Slack inboxes, the context budget, and one favorite action button.
 
 This file is two guides in one. The first part installs or runs this mod. The second part builds a pet mod from nothing, in four files, so you can make your own.
 
