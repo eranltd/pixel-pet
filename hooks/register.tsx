@@ -51,11 +51,13 @@ import type {
 } from '../types'
 
 import {
+  ACCENT,
   CONTEXT_COLORS,
   SIDE_PANE,
   drawSidePane,
   TAB_MARKS,
   cacheBadge,
+  iconSvg,
   sidePaneTitle,
   loadSessionStats,
   loadTicket,
@@ -3874,13 +3876,32 @@ export const register: Register = (on, options) => {
     if (e.props.hasSurvey) {
       return next(e)
     }
-    // The side-pane layout draws Bit beside the chat; the band only offers the pane back once it is closed.
+    // The side-pane layout draws Bit beside the chat; once the pane is closed the band keeps its TL;DR and offers the pane back.
     if (isSidePane()) {
       if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e)
       if ((await $.ui.panes()).some(pane => pane.id === SIDE_PANE && pane.isPlaced)) return next(e)
-      const { Box, Button } = $.ui.resolve(e)
+      const { Box, Button, Text } = $.ui.resolve(e)
+      const tldr = await read($, sessionTldrAtom)
+      let mark = <Text color={ACCENT}>✦</Text>
+      if (e.surface === 'desktop') {
+        const { Svg } = $.ui.resolve(e)
+        mark = <Svg source={iconSvg('spark', ACCENT)} alt="TL;DR" width={16} height={16} />
+      }
       return (
-        <Box flexDirection="row" justifyContent="flex-end">
+        <Box flexDirection="row" justifyContent={tldr === null ? 'flex-end' : 'space-between'} columnGap={2}>
+          {tldr !== null && (
+            <Box key="pet-tldr" flexDirection="row" gap={1} alignItems="flex-start" flexShrink={1}>
+              <Box key="pet-tldr-icon" flexShrink={0}>
+                {mark}
+              </Box>
+              <Text wrap="wrap">
+                <Text bold color={ACCENT}>
+                  TL;DR
+                </Text>
+                {` ${tldr}`}
+              </Text>
+            </Box>
+          )}
           <Button key="pet-pane-open" plain dimColor label={`🐶 ${PET}`} onPress={() => void openSidePane($)} />
         </Box>
       )

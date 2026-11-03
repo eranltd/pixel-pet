@@ -411,10 +411,11 @@ test('the status line reads Waiting on you while a question is open, and clears 
   await pane.unmount()
 })
 
-test('with the pane open the band draws nothing; closed, it offers the pane back', { options: OPTIONS }, async ($, on) => {
+test('with the pane open the band draws nothing; closed, it keeps the TL;DR and offers the pane back', { options: OPTIONS }, async ($, on) => {
   await sessionOnTicket($, on, false)
   const band = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: BAND })
   expect(await band.find({ key: 'pet-pane-open' })).toBeDefined()
+  expect(JSON.stringify(await band.find({ key: 'pet-tldr' }))).toContain('Wiring the checkout ticket')
   expect(await band.find({ key: 'handoff' })).toBeUndefined()
   await band.unmount()
 })

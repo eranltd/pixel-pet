@@ -995,7 +995,7 @@ export const titleSvg = (title: string, color: string) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 20" width="${width}" height="20"><text x="0" y="15" font-family="${FONT}" font-size="15" font-weight="650" fill="${color}">${escapeXml(title)}</text></svg>`
 }
 
-const ACCENT = '#D97757'
+export const ACCENT = '#D97757'
 // A section whose source has nothing draws its headline at this opacity.
 const EMPTY_OPACITY = 0.45
 
