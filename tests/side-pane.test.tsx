@@ -394,6 +394,23 @@ test('the status line on top names the task in hand, Context names the model, an
   await pane.unmount()
 })
 
+// Under managed settings cc-plugin-sec-default skips every classic.* hook, so the wait cannot come from classic.Notification.
+test('the status line reads Waiting on you while a question is open, and clears once it is answered', { options: OPTIONS }, async ($, on) => {
+  let status = async () => ''
+  let whileAsked = ''
+  on('tool.call', { tool: 'AskUserQuestion' }, async () => {
+    whileAsked = await status()
+    return { result: {}, text: 'answered' }
+  })
+  await sessionOnTicket($, on, true)
+  const pane = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'Pane', requestId: 'ticket', props: PANE })
+  status = async () => JSON.stringify(await pane.find({ key: 'tp-status' }))
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  expect(whileAsked).toContain('Waiting on you')
+  expect(await status()).not.toContain('Waiting on you')
+  await pane.unmount()
+})
+
 test('with the pane open the band draws nothing; closed, it offers the pane back', { options: OPTIONS }, async ($, on) => {
   await sessionOnTicket($, on, false)
   const band = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: BAND })

@@ -3184,6 +3184,23 @@ async function retitlePanes($: EngineInterface) {
   }
 }
 
+// Tools whose call blocks until the person answers, by the wait each shows.
+const WAITS_ON_YOU: Readonly<Record<string, string>> = { AskUserQuestion: 'question', ExitPlanMode: 'plan approval' }
+
+async function markWaiting($: EngineInterface, reason: string) {
+  local.needsYou = reason
+  await update($, attentionAtom, () => true)
+  void retitlePanes($)
+  void publish($)
+}
+
+async function clearWaiting($: EngineInterface) {
+  local.needsYou = null
+  await update($, attentionAtom, () => false)
+  void retitlePanes($)
+  void publish($)
+}
+
 async function loadSessionStatsView($: EngineInterface) {
   if (local.isDemo) {
     return
@@ -3534,6 +3551,7 @@ export const register: Register = (on, options) => {
     await update($, runningAtom, () => false)
     const endedAt = await $.clock.now()
     await update($, lastActiveAtom, () => endedAt)
+    void refreshCacheTtl($)
     void publish($)
     void retitlePanes($)
     if (isSidePane() && endedAt - sidePaneLocal.lastTurnAt >= TICKET_TURN_GAP_MS) {
@@ -3582,7 +3600,14 @@ export const register: Register = (on, options) => {
       await changePlan($, (plan, now) => applyPlanUpdate(begin(plan, now), call))
     }
 
+    const waitsOn = isMain ? WAITS_ON_YOU[call.tool] : undefined
+    if (waitsOn !== undefined) {
+      await markWaiting($, waitsOn)
+    }
     const ran = await next(e)
+    if (waitsOn !== undefined) {
+      await clearWaiting($)
+    }
     if (isSidePane() && ran.deny === undefined && ran.isError !== true) {
       if (call.tool === 'mcp__ccd_pr__set_monitor' && typeof call.auto_fix === 'boolean') {
         await update($, watchingPrAtom, () => call.auto_fix === true)
@@ -3632,20 +3657,6 @@ export const register: Register = (on, options) => {
     }
 
     return ran
-  })
-
-  on('classic.TaskCreated', async ($, e, next) => {
-    if (e.teammate_name === undefined) {
-      await changePlan($, (plan, now) => upsertTask(begin(plan, now), { id: e.task_id, subject: e.task_subject }))
-    }
-    return next(e)
-  })
-
-  on('classic.TaskCompleted', async ($, e, next) => {
-    if (e.teammate_name === undefined) {
-      await changePlan($, plan => upsertTask(plan, { id: e.task_id, subject: e.task_subject, status: 'completed' }))
-    }
-    return next(e)
   })
 
   on('command.run', { command: 'pet' }, async $ => {
@@ -3725,14 +3736,16 @@ export const register: Register = (on, options) => {
     return closed
   })
 
+  // Skipped where cc-plugin-sec-default sits outermost (managed settings, Team and Enterprise); the question tools above still mark the wait.
   on('classic.Notification', async ($, e, next) => {
-    local.needsYou = e.notification_type.replace(/_prompt$/, '').replace(/_/g, ' ') || 'input'
+    const reason = e.notification_type.replace(/_prompt$/, '').replace(/_/g, ' ') || 'input'
     // An idle prompt is the normal wait after a turn; anything else is a question or permission waiting on you.
-    if (e.notification_type !== 'idle_prompt') {
-      await update($, attentionAtom, () => true)
-      void retitlePanes($)
+    if (e.notification_type === 'idle_prompt') {
+      local.needsYou = reason
+      void publish($)
+    } else {
+      await markWaiting($, reason)
     }
-    void publish($)
     return next(e)
   })
 
@@ -4311,23 +4324,6 @@ export const register: Register = (on, options) => {
     }
 
     return yield* next(e)
-  })
-
-  on('classic.UserPromptSubmit', ($, e, next) => {
-    cacheLocal.transcriptPath = e.transcript_path
-
-    return next(e)
-  })
-
-  on('classic.Stop', async ($, e, next) => {
-    cacheLocal.transcriptPath = e.transcript_path
-    void refreshCacheTtl($)
-    const tasks = (e as { background_tasks?: { id: string; type: string; description: string }[] }).background_tasks
-    if (Array.isArray(tasks)) {
-      await update($, backgroundAtom, () => tasks.map(task => ({ id: task.id, type: task.type, description: task.description })))
-    }
-
-    return next(e)
   })
 
   on('agent.spawn', async ($, e, next) => {
