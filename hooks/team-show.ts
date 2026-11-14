@@ -2,10 +2,10 @@
 // a row for each thing that happened (advisor wake-ups, the last check, subagents), then the newest tool calls.
 // Nothing that did not happen gets a row, and it moves only while a turn runs.
 
-export type TeamStep = { tool: string; detail: string; isError: boolean }
+// actor: the subagent that made the call, or null for the main session. input and output are kept for the Step pane.
+export type TeamStep = { id: string; tool: string; detail: string; isError: boolean; actor: string | null; at: number; input: string; output: string }
 
 export type TeamShow = {
-  main: string
   advisor: string | null
   wakes: number | null
   isWorking: boolean
@@ -18,7 +18,6 @@ export type TeamShow = {
   steps: readonly TeamStep[]
 }
 
-export const TEAM_SHOW_WIDTH = 420
 const ROW = 22
 const PAD = 12
 const FONT = `font-family="ui-monospace,SFMono-Regular,Menlo,monospace"`
@@ -48,8 +47,6 @@ const text = (x: number, y: number, body: string, color = C.text, size = 12, ext
 
 const pulse = (dur = 1.1) => `<animate attributeName="opacity" values="1;0.3;1" dur="${dur}s" repeatCount="indefinite"/>`
 
-const MAX_CHARS = Math.floor((TEAM_SHOW_WIDTH - PAD * 2) / CHAR)
-
 function toolColor(step: TeamStep): string {
   if (step.isError) return C.fail
   if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(step.tool)) return C.write
@@ -59,30 +56,37 @@ function toolColor(step: TeamStep): string {
   return C.mcp
 }
 
+const maxChars = (width: number) => Math.floor((width - PAD * 2) / CHAR)
+
 // One line: a dot, a bold label in its color, then the detail in what room is left.
-function row(y: number, color: string, label: string, detail: string, detailColor = C.text) {
-  const room = MAX_CHARS - label.length - 4
-  return `<g><circle cx="${PAD + 4}" cy="${y - 4}" r="3.5" fill="${color}"/>${text(PAD + 14, y, esc(label), color, 12, 'font-weight="700"')}${room > 2 && detail !== '' ? text(PAD + 14 + (label.length + 1) * CHAR, y, esc(clip(detail, room)), detailColor, 12) : ''}</g>`
+function row(width: number, y: number, color: string, label: string, detail: string, detailColor = C.text, actor: string | null = null) {
+  const room = maxChars(width) - label.length - 4 - (actor === null ? 0 : actor.length + 2)
+  const tag = actor === null ? '' : text(width - PAD - 10, y, esc(actor), C.muted, 11, 'text-anchor="end"')
+  return `<g>${tag}<circle cx="${PAD + 4}" cy="${y - 4}" r="3.5" fill="${color}"/>${text(PAD + 14, y, esc(label), color, 12, 'font-weight="700"')}${room > 2 && detail !== '' ? text(PAD + 14 + (label.length + 1) * CHAR, y, esc(clip(detail, room)), detailColor, 12) : ''}</g>`
 }
 
-export function teamShowSvg(show: TeamShow): { svg: string; height: number } {
+// Drawn at the pane's own width, so the text keeps its size and a wider pane shows more of each line.
+export function teamShowSvg(show: TeamShow, width: number): { svg: string; height: number } {
+  const MAX_CHARS = maxChars(width)
   const parts: string[] = []
   let y = PAD + 12
 
-  // The header: the main model, the task in hand and the plan's progress.
-  const main = short(show.main || 'model')
+  // The header: the task in hand and the plan's progress, when there is a plan.
   const progress = show.progress === null ? '' : `${show.progress.done}/${show.progress.total}`
-  parts.push(
-    text(PAD, y, `● ${esc(main)}`, C.main, 13, 'font-weight="700"'),
-    show.task === null ? '' : text(PAD + (main.length + 3) * 7.9, y, esc(clip(show.task, MAX_CHARS - main.length - progress.length - 5)), C.text, 12),
-    progress === '' ? '' : text(TEAM_SHOW_WIDTH - PAD, y, progress, C.muted, 11, 'text-anchor="end"'),
-  )
+  if (show.task !== null || progress !== '') {
+    parts.push(
+      text(PAD, y, esc(clip(show.task ?? 'plan', MAX_CHARS - progress.length - 2)), C.main, 13, 'font-weight="700"'),
+      progress === '' ? '' : text(width - PAD, y, progress, C.muted, 11, 'text-anchor="end"'),
+    )
+  } else {
+    y -= 12
+  }
   if (show.progress !== null && show.progress.total > 0) {
-    const width = TEAM_SHOW_WIDTH - PAD * 2
+    const barWidth = width - PAD * 2
     y += 9
     parts.push(
-      `<rect x="${PAD}" y="${y}" width="${width}" height="3" rx="1.5" fill="${C.line}"/>`,
-      `<rect x="${PAD}" y="${y}" width="${Math.max(4, Math.round((width * show.progress.done) / show.progress.total))}" height="3" rx="1.5" fill="${C.main}">${show.isWorking ? pulse() : ''}</rect>`,
+      `<rect x="${PAD}" y="${y}" width="${barWidth}" height="3" rx="1.5" fill="${C.line}"/>`,
+      `<rect x="${PAD}" y="${y}" width="${Math.max(4, Math.round((barWidth * show.progress.done) / show.progress.total))}" height="3" rx="1.5" fill="${C.main}">${show.isWorking ? pulse() : ''}</rect>`,
     )
   }
   y += 8
@@ -90,42 +94,45 @@ export function teamShowSvg(show: TeamShow): { svg: string; height: number } {
   // Only what happened: the advisor's wake-ups, the last check, the subagents.
   const facts: string[] = []
   if (show.advisor !== null && (show.wakes ?? 0) > 0) {
-    facts.push(row(y + ROW, C.advisor, short(show.advisor), `woke ${show.wakes}×`, C.muted))
+    facts.push(row(width, y + ROW, C.advisor, short(show.advisor), `woke ${show.wakes}×`, C.muted))
     y += ROW
   }
   if (show.check !== null) {
-    facts.push(row(y + ROW, show.check.isOk ? C.write : C.fail, show.check.isOk ? '✓ check' : '✗ check', show.check.command))
+    facts.push(row(width, y + ROW, show.check.isOk ? C.write : C.fail, show.check.isOk ? '✓ check' : '✗ check', show.check.command))
     y += ROW
   }
   if (show.running + show.agentsDone > 0) {
     const label = show.running > 0 ? `${show.running} agent${show.running === 1 ? '' : 's'} at work` : 'agents'
-    facts.push(`<g>${row(y + ROW, C.advisor, label, show.agentsDone > 0 ? `${show.agentsDone} done` : '', C.muted)}${show.running > 0 ? pulse(0.9) : ''}</g>`)
+    facts.push(`<g>${row(width, y + ROW, C.advisor, label, show.agentsDone > 0 ? `${show.agentsDone} done` : '', C.muted)}${show.running > 0 ? pulse(0.9) : ''}</g>`)
     y += ROW
   }
   parts.push(...facts)
 
-  // The feed: the newest tool calls, the newest sliding in on top while the turn runs.
+  // The feed's rows are drawn one by one (feedRowSvg) so each can be pressed; with none, the header says why.
   if (show.steps.length > 0) {
     y += 6
-    parts.push(`<line x1="${PAD}" y1="${y}" x2="${TEAM_SHOW_WIDTH - PAD}" y2="${y}" stroke="${C.line}"/>`)
-    show.steps.forEach((step, i) => {
-      y += ROW
-      const fade = i === 0 ? '' : ` opacity="${Math.max(0.35, 1 - i * 0.15).toFixed(2)}"`
-      const slide = i === 0 && show.isWorking ? '<animateTransform attributeName="transform" type="translate" from="-12 0" to="0 0" dur="0.35s" fill="freeze"/>' : ''
-      parts.push(`<g${fade}>${row(y, toolColor(step), step.tool, step.detail, i === 0 ? C.text : C.muted)}${slide}</g>`)
-    })
-    if (show.isWorking) {
-      const firstY = y - (show.steps.length - 1) * ROW
-      parts.push(`<rect x="${TEAM_SHOW_WIDTH - PAD - 7}" y="${firstY - 11}" width="7" height="13" fill="${C.text}"><animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite" calcMode="discrete"/></rect>`)
-    }
+    parts.push(`<line x1="${PAD}" y1="${y}" x2="${width - PAD}" y2="${y}" stroke="${C.line}"/>`)
   } else {
     y += ROW
     parts.push(text(PAD, y, show.isWorking ? '● working' : '○ waiting for a prompt', C.muted, 12))
+    y += PAD
   }
 
-  const height = y + PAD
+  const height = y
   return {
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${TEAM_SHOW_WIDTH} ${height}" width="${TEAM_SHOW_WIDTH}" height="${height}"><rect width="${TEAM_SHOW_WIDTH}" height="${height}" rx="8" fill="${C.bg}"/>${parts.join('')}</svg>`,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="${C.bg}"/>${parts.join('')}</svg>`,
+    height,
+  }
+}
+
+export const FEED_ROW_HEIGHT = ROW
+
+// One feed row, newest first: older rows fade, the last one keeps the box's bottom padding.
+export function feedRowSvg(step: TeamStep, index: number, width: number, isLast: boolean): { svg: string; height: number } {
+  const height = ROW + (isLast ? 8 : 0)
+  const fade = index === 0 ? '' : ` opacity="${Math.max(0.35, 1 - index * 0.15).toFixed(2)}"`
+  return {
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="${C.bg}"/><g${fade}>${row(width, 16, toolColor(step), step.tool, step.detail, index === 0 ? C.text : C.muted, step.actor)}</g></svg>`,
     height,
   }
 }

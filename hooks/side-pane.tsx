@@ -1,5 +1,6 @@
 import type { Elements, EngineInterface, RenderElement, RenderNode } from 'claude-code'
-import { TEAM_SHOW_WIDTH } from './team-show'
+import { feedRowSvg, teamShowSvg } from './team-show'
+import type { TeamShow } from './team-show'
 
 import type {
   CiState,
@@ -1164,7 +1165,8 @@ export type SidePaneParts = {
   onAdvisor: (model: string) => void
   onSubagentModel: (model: string | undefined) => void
   // The animated agent tree pinned above Context.
-  teamShow: { svg: string; height: number }
+  teamShow: TeamShow
+  onOpenStep: (id: string) => void
   // Sections whose status just changed, or Code Review while the session watches a PR.
   blinking: readonly string[]
   isWorking: boolean
@@ -1191,6 +1193,8 @@ export type SidePaneParts = {
 // Below this many rows of room the footer is not pinned; the ▲ ▼ buttons move the body by this much.
 const STICKY_MIN_ROWS = 8
 // The agent drawing stays pinned only while this many body rows remain.
+// Room at the end of each feed row for the › that opens its Step pane.
+const STEP_OPEN_WIDTH = 24
 const SHOW_PIN_BODY_ROWS = 16
 const SCROLL_STEP_ROWS = 6
 
@@ -1740,8 +1744,10 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
     </>
   )
   // The agent tree sits pinned above Context while the sections above keep room to read; else it ends the body.
-  const showWidth = Math.min(TEAM_SHOW_WIDTH, Math.max(240, parts.columns * 7 - 40))
-  const showHeight = Math.round((parts.teamShow.height * showWidth) / TEAM_SHOW_WIDTH)
+  const showWidth = Math.max(240, parts.columns * 7 - 40)
+  const drawn = teamShowSvg(parts.teamShow, showWidth)
+  const feed = parts.teamShow.steps.map((step, i) => ({ step, ...feedRowSvg(step, i, showWidth - STEP_OPEN_WIDTH, i === parts.teamShow.steps.length - 1) }))
+  const showHeight = drawn.height + feed.reduce((sum, row) => sum + row.height, 0)
   const showRows = Svg ? 2 + (parts.isCollapsed('tp-show') ? 0 : Math.ceil(showHeight / 20)) : 0
   const showSection = Svg
     ? section(
@@ -1750,8 +1756,14 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
         'spark',
         COLOR.team,
         [
-          <Box key="tp-show-art">
-            <Svg source={parts.teamShow.svg} alt="The session's models as an agent tree" width={showWidth} height={showHeight} isInteractive />
+          <Box key="tp-show-art" flexDirection="column">
+            <Svg key="tp-show-head" source={drawn.svg} alt="The task in hand and what happened" width={showWidth} height={drawn.height} isInteractive />
+            {feed.map((row, i) => (
+              <Box key={`tp-show-step-${i}`} flexDirection="row" alignItems="flex-start" backgroundColor="#0d1117" width={showWidth}>
+                <Svg key={`tp-show-step-${i}-art`} source={row.svg} alt={`${row.step.tool} ${row.step.detail}`} width={showWidth - STEP_OPEN_WIDTH} height={row.height} />
+                <Button key={`tp-show-step-${i}-open`} plain dimColor label="›" hover={{ bold: true }} onPress={() => parts.onOpenStep(row.step.id)} />
+              </Box>
+            ))}
           </Box>,
         ],
       )

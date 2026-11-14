@@ -69,7 +69,6 @@ import {
   writeTldr,
 } from './side-pane'
 import type { SessionLine, SidePaneSettings } from './side-pane'
-import { teamShowSvg } from './team-show'
 import type { TeamShow, TeamStep } from './team-show'
 
 const PANE = 'plan-progress'
@@ -1229,20 +1228,22 @@ async function setSubagentModel($: EngineInterface, model: string | undefined) {
 
 type TeamActivity = { steps: TeamStep[]; check: { command: string; isOk: boolean } | null; agentsDone: number }
 
-const activityAtom = atom({ plugin: 'pixel-pet', key: 'teamFeed' } as const, { steps: [], check: null, agentsDone: 0 } as TeamActivity)
+const activityAtom = atom({ plugin: 'pixel-pet', key: 'teamFeedV3' } as const, { steps: [], check: null, agentsDone: 0 } as TeamActivity)
 const FEED_STEPS = 6
 
 const CHECK_COMMAND = /\b(test|vitest|jest|pytest|tsc|lint|oxlint|eslint|typecheck|check)\b/
 
 // What a tool call did, in a few words: the command, the file, or the subagent's task.
-function stepOf(call: AnyCall, isError: boolean): TeamStep {
+const STEP_TEXT_MAX = 4000
+
+function stepOf(call: AnyCall, isError: boolean, actor: string | null, at: number, output: string): TeamStep {
   const tool = call.tool.includes('__') ? (call.tool.split('__').at(-1) ?? call.tool) : call.tool
   const file = typeof call.file_path === 'string' ? (call.file_path.split('/').at(-1) ?? '') : ''
   // Else the first plain string argument: a query, a channel, a pattern, a skill name.
   const firstArg = Object.entries(call).find(([name, value]) => !['tool', 'tool_use_id', 'agentId'].includes(name) && typeof value === 'string' && value !== '')?.[1]
   const detail =
     typeof call.command === 'string'
-      ? firstLine(call.command, 60)
+      ? firstLine(call.command.replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, ''), 80)
       : file !== ''
         ? file
         : typeof call.description === 'string'
@@ -1250,24 +1251,45 @@ function stepOf(call: AnyCall, isError: boolean): TeamStep {
           : typeof firstArg === 'string'
             ? firstLine(firstArg, 60)
             : ''
-  return { tool, detail, isError }
+  const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = call
+  return {
+    id: call.tool_use_id ?? `${call.tool}-${at}`,
+    tool,
+    detail,
+    isError,
+    actor,
+    at,
+    input: JSON.stringify(input, null, 2).slice(0, STEP_TEXT_MAX),
+    output: output.slice(0, STEP_TEXT_MAX),
+  }
 }
 
-async function recordActivity($: EngineInterface, call: AnyCall, isError: boolean) {
+async function recordActivity($: EngineInterface, call: AnyCall, isError: boolean, output: string) {
+  const at = await $.clock.now()
+  const actor = call.agentId === undefined ? null : ((await read($, runningAgentsAtom)).find(agent => agent.id === call.agentId)?.type ?? 'subagent')
   await update($, activityAtom, activity => ({
-    steps: [stepOf(call, isError), ...activity.steps].slice(0, FEED_STEPS),
-    check: call.tool === 'Bash' && typeof call.command === 'string' && CHECK_COMMAND.test(call.command) ? { command: firstLine(call.command, 60), isOk: !isError } : activity.check,
-    agentsDone: activity.agentsDone + ((call.tool === 'Agent' || call.tool === 'Task') && call.run_in_background !== true ? 1 : 0),
+    steps: [stepOf(call, isError, actor, at, output), ...activity.steps].slice(0, FEED_STEPS),
+    check: actor === null && call.tool === 'Bash' && typeof call.command === 'string' && CHECK_COMMAND.test(call.command) ? { command: firstLine(call.command.replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, ''), 80), isOk: !isError } : activity.check,
+    agentsDone: activity.agentsDone + (actor === null && (call.tool === 'Agent' || call.tool === 'Task') && call.run_in_background !== true ? 1 : 0),
   }))
+}
+
+// The Step pane: everything kept about one feed row, opened by pressing it.
+const STEP_PANE = 'bit-step'
+const openStepAtom = atom({ plugin: 'pixel-pet', key: 'openStep' } as const, null as string | null)
+
+async function openStep($: EngineInterface, id: string) {
+  const step = (await read($, activityAtom)).steps.find(one => one.id === id)
+  if (step === undefined) return
+  await update($, openStepAtom, () => id)
+  await $.ui.open({ id: STEP_PANE, title: `${step.tool}${step.actor === null ? '' : ` · ${step.actor}`}`, focus: true })
 }
 
 async function teamShowOf($: EngineInterface): Promise<TeamShow> {
   const team = await read($, teamAtom)
-  const mode = await read($, sessionModeAtom)
   const plan = await read($, planAtom)
   const activity = await read($, activityAtom)
   return {
-    main: mode?.model ?? (await read($, usageAtom))?.model ?? '',
     advisor: team?.advisor ?? null,
     wakes: team?.wakes ?? null,
     isWorking: await read($, runningAtom),
@@ -3737,9 +3759,9 @@ export const register: Register = (on, options) => {
         await update($, watchingPrAtom, () => true)
       }
     }
-    // The Agents drawing shows the main thread's last tool call, its last check and the subagents done this turn.
-    if (isMain && isSidePane() && ran.deny === undefined) {
-      await recordActivity($, call, ran.isError === true)
+    // The Agents drawing shows the last tool calls, the subagents' included, the last check and the subagents done this turn.
+    if (isSidePane() && ran.deny === undefined) {
+      await recordActivity($, call, ran.isError === true, outputOf(ran))
     }
     // Config drafts cannot be listed, so the side pane learns their codes from the results that print them.
     if (isSidePane() && ran.deny === undefined) {
@@ -3941,6 +3963,33 @@ export const register: Register = (on, options) => {
             )}
           </Box>
         ))}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: STEP_PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const id = await read($, openStepAtom)
+    const step = (await read($, activityAtom)).steps.find(one => one.id === id)
+    if (step === undefined) {
+      return <Text dimColor>This step has left the feed.</Text>
+    }
+    const block = (key: string, title: string, body: string) => (
+      <Box key={key} flexDirection="column" marginTop={1}>
+        <Text bold>{title}</Text>
+        <Text wrap="wrap">{body === '' ? '—' : body}</Text>
+      </Box>
+    )
+    return (
+      <Box flexDirection="column">
+        <Box key="step-head" flexDirection="row" gap={2}>
+          <Text bold color={step.isError ? 'red' : 'green'}>{step.isError ? '✗ failed' : '✓ ok'}</Text>
+          <Text bold>{step.tool}</Text>
+          <Text dimColor>{step.actor ?? 'main session'}</Text>
+          <Text dimColor>{hourMinute(step.at)}</Text>
+        </Box>
+        {block('step-input', 'Input', step.input)}
+        {block('step-output', 'Result', step.output)}
       </Box>
     )
   })
@@ -4478,7 +4527,8 @@ export const register: Register = (on, options) => {
       team: await read($, teamAtom),
       onAdvisor: model => void setAdvisor($, model),
       onSubagentModel: model => void setSubagentModel($, model),
-      teamShow: teamShowSvg(await teamShowOf($)),
+      teamShow: await teamShowOf($),
+      onOpenStep: id => void openStep($, id),
       blinking: [...Object.keys(blinkUntil), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
       isWorking,
       onScrollSessions: by => void scrollSidePaneSessions($, by),
