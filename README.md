@@ -55,7 +55,7 @@ Under the separator, what waits on you:
 The footer stays at the bottom while the rest scrolls:
 
 - **Slack**: your DMs and mentions since your last reply, folded, with the count beside its caret. A new message opens it for 30 seconds while it blinks, then it folds again; opened by hand, it stays open. Each shows its latest message and the time it came. A long one scrolls past like a ticker. ✓ clears one, "clear all" clears them all.
-- **Agents**: what the session does behind the scenes, folded until you open it. On top, the task in hand and the plan's progress. Then a row only for what happened: the advisor's wake-ups, the last test, lint or type check with ✓ or ✗, and the subagents at work and done this turn. Under them, the last six tool calls, the newest on top, colored by kind (Bash, edits, reads, MCP tools, agents, failures in red), each subagent's call tagged with its type. It fills the pane's width and moves only while a turn runs. The **›** at the end of a row opens the **Step** pane: the call's status, tool, agent and time, its full input, and the start of its result. When the pane is too short, Agents moves to the end of the body so the sections above keep room.
+- **Agents**: what the session does behind the scenes, folded until you open it. On top, the task in hand and the plan's progress. Then a row only for what happened: the advisor's wake-ups, the last test, lint or type check with ✓ or ✗, and the subagents at work and done this turn. Under them, the last six tool calls, the newest on top, colored by kind (Bash, edits, reads, MCP tools, agents, failures in red), each subagent's call tagged with its type. It fills the pane's width and moves only while a turn runs. The **›** at the end of a row opens it in place, under itself: the call's status, agent and time, then its input and its result, ten lines of each. **⌄** folds it again, and opening another row folds the first. When the pane is too short, Agents moves to the end of the body so the sections above keep room.
 - **Context**: the share of the context window used, the tokens, and a bar. Under it, the model, its effort and fast mode. On the right, a warning when the prompt cache is about to expire, and `cache cold` once it has.
 - Last, when the pane last refreshed, a pixel snake that slithers (faster while Claude works), **Keep warm**, which sends one tiny request just before the cache expires, and **KISS**, which explains the topic with the [kiss](https://github.com/eranltd/kiss) skill.
 
@@ -412,7 +412,7 @@ export const register: Register = on => {
 
 **Other sessions.** Each session writes a small JSON snapshot every five seconds under `~/.claude/plan-progress/sessions/` and reads the others' on each heartbeat. A snapshot older than three heartbeats is a closed or crashed session. The desktop app's own session id comes from the `CLAUDE_CODE_HOST_SESSION_ID` env var, and a `claude://` link built from it opens that session.
 
-**Panes.** `$.ui.open({ id, title })` opens a side pane; a `ui.render` hook on `{ component: 'Pane', requestId: id }` draws it. The mod has seven: the side pane, the plan, the actions, the critique, the worktree janitor, the team and the step.
+**Panes.** `$.ui.open({ id, title })` opens a side pane; a `ui.render` hook on `{ component: 'Pane', requestId: id }` draws it. The mod has six: the side pane, the plan, the actions, the critique, the worktree janitor and the team.
 
 ### Things that bite
 

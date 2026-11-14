@@ -394,13 +394,13 @@ test('the status line on top names the task in hand, Context names the model, an
   expect(JSON.stringify(await pane.find({ key: 'tp-context-mode' }))).toContain('Opus 5.5')
   expect(JSON.stringify(await pane.find({ key: 'tp-context-mode' }))).toContain('fast off')
 
-  // Agents lists the calls behind the scenes; the › on a row opens its Step pane with the full input.
+  // Agents lists the calls behind the scenes; the › on a row opens it in place with its input, and folds it again.
   await pane.press({ key: 'tp-show-toggle' })
-  expect(JSON.stringify(await pane.drawn())).toContain('gh pr create --fill')
+  expect(await pane.find({ key: 'tp-show-step-0-more' })).toBeUndefined()
   await pane.press({ key: 'tp-show-step-0-open' })
-  const step = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'Pane', requestId: 'bit-step', props: PANE })
-  expect(JSON.stringify(await step.drawn())).toContain('gh pr create --fill')
-  await step.unmount()
+  expect(JSON.stringify(await pane.find({ key: 'tp-show-step-0-more' }))).toContain('gh pr create --fill')
+  await pane.press({ key: 'tp-show-step-0-open' })
+  expect(await pane.find({ key: 'tp-show-step-0-more' })).toBeUndefined()
 
   // Code Review shows where review stands on the PR the session opened: only the thread that waits on you counts.
   const review = JSON.stringify(await pane.drawn())

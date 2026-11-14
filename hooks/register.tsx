@@ -1274,16 +1274,8 @@ async function recordActivity($: EngineInterface, call: AnyCall, isError: boolea
   }))
 }
 
-// The Step pane: everything kept about one feed row, opened by pressing it.
-const STEP_PANE = 'bit-step'
+// One feed row at a time opens in place, under itself, with its input and result.
 const openStepAtom = atom({ plugin: 'pixel-pet', key: 'openStep' } as const, null as string | null)
-
-async function openStep($: EngineInterface, id: string) {
-  const step = (await read($, activityAtom)).steps.find(one => one.id === id)
-  if (step === undefined) return
-  await update($, openStepAtom, () => id)
-  await $.ui.open({ id: STEP_PANE, title: `${step.tool}${step.actor === null ? '' : ` · ${step.actor}`}`, focus: true })
-}
 
 async function teamShowOf($: EngineInterface): Promise<TeamShow> {
   const team = await read($, teamAtom)
@@ -3967,33 +3959,6 @@ export const register: Register = (on, options) => {
     )
   })
 
-  on('ui.render', { component: 'Pane', requestId: STEP_PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    const id = await read($, openStepAtom)
-    const step = (await read($, activityAtom)).steps.find(one => one.id === id)
-    if (step === undefined) {
-      return <Text dimColor>This step has left the feed.</Text>
-    }
-    const block = (key: string, title: string, body: string) => (
-      <Box key={key} flexDirection="column" marginTop={1}>
-        <Text bold>{title}</Text>
-        <Text wrap="wrap">{body === '' ? '—' : body}</Text>
-      </Box>
-    )
-    return (
-      <Box flexDirection="column">
-        <Box key="step-head" flexDirection="row" gap={2}>
-          <Text bold color={step.isError ? 'red' : 'green'}>{step.isError ? '✗ failed' : '✓ ok'}</Text>
-          <Text bold>{step.tool}</Text>
-          <Text dimColor>{step.actor ?? 'main session'}</Text>
-          <Text dimColor>{hourMinute(step.at)}</Text>
-        </Box>
-        {block('step-input', 'Input', step.input)}
-        {block('step-output', 'Result', step.output)}
-      </Box>
-    )
-  })
-
   on('ui.render', { component: 'Pane', requestId: TEAM_PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const team = await read($, teamAtom)
@@ -4528,7 +4493,8 @@ export const register: Register = (on, options) => {
       onAdvisor: model => void setAdvisor($, model),
       onSubagentModel: model => void setSubagentModel($, model),
       teamShow: await teamShowOf($),
-      onOpenStep: id => void openStep($, id),
+      openStep: await read($, openStepAtom),
+      onToggleStep: id => void update($, openStepAtom, open => (open === id ? null : id)),
       blinking: [...Object.keys(blinkUntil), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
       isWorking,
       onScrollSessions: by => void scrollSidePaneSessions($, by),

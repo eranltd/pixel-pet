@@ -1166,7 +1166,9 @@ export type SidePaneParts = {
   onSubagentModel: (model: string | undefined) => void
   // The animated agent tree pinned above Context.
   teamShow: TeamShow
-  onOpenStep: (id: string) => void
+  // The feed row open in place, by its call id; null while every row is folded.
+  openStep: string | null
+  onToggleStep: (id: string) => void
   // Sections whose status just changed, or Code Review while the session watches a PR.
   blinking: readonly string[]
   isWorking: boolean
@@ -1193,8 +1195,9 @@ export type SidePaneParts = {
 // Below this many rows of room the footer is not pinned; the ▲ ▼ buttons move the body by this much.
 const STICKY_MIN_ROWS = 8
 // The agent drawing stays pinned only while this many body rows remain.
-// Room at the end of each feed row for the › that opens its Step pane.
+// Room at the end of each feed row for the › that opens it, and how much of its input and result it shows.
 const STEP_OPEN_WIDTH = 24
+const STEP_LINES = 10
 const SHOW_PIN_BODY_ROWS = 16
 const SCROLL_STEP_ROWS = 6
 
@@ -1747,7 +1750,10 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
   const showWidth = Math.max(240, parts.columns * 7 - 40)
   const drawn = teamShowSvg(parts.teamShow, showWidth)
   const feed = parts.teamShow.steps.map((step, i) => ({ step, ...feedRowSvg(step, i, showWidth - STEP_OPEN_WIDTH, i === parts.teamShow.steps.length - 1) }))
-  const showHeight = drawn.height + feed.reduce((sum, row) => sum + row.height, 0)
+  const stepLines = (body: string) => (body === '' ? ['—'] : body.split('\n').slice(0, STEP_LINES))
+  const openRow = feed.find(row => row.step.id === parts.openStep)
+  const openRows = openRow === undefined ? 0 : stepLines(openRow.step.input).length + stepLines(openRow.step.output).length + 4
+  const showHeight = drawn.height + feed.reduce((sum, row) => sum + row.height, 0) + openRows * 20
   const showRows = Svg ? 2 + (parts.isCollapsed('tp-show') ? 0 : Math.ceil(showHeight / 20)) : 0
   const showSection = Svg
     ? section(
@@ -1758,12 +1764,40 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
         [
           <Box key="tp-show-art" flexDirection="column">
             <Svg key="tp-show-head" source={drawn.svg} alt="The task in hand and what happened" width={showWidth} height={drawn.height} isInteractive />
-            {feed.map((row, i) => (
-              <Box key={`tp-show-step-${i}`} flexDirection="row" alignItems="flex-start" backgroundColor="#0d1117" width={showWidth}>
-                <Svg key={`tp-show-step-${i}-art`} source={row.svg} alt={`${row.step.tool} ${row.step.detail}`} width={showWidth - STEP_OPEN_WIDTH} height={row.height} />
-                <Button key={`tp-show-step-${i}-open`} plain dimColor label="›" hover={{ bold: true }} onPress={() => parts.onOpenStep(row.step.id)} />
-              </Box>
-            ))}
+            {feed.flatMap((row, i) => {
+              const isOpen = row.step.id === parts.openStep
+              return [
+                <Box key={`tp-show-step-${i}`} flexDirection="row" alignItems="flex-start" backgroundColor="#0d1117" width={showWidth}>
+                  <Svg key={`tp-show-step-${i}-art`} source={row.svg} alt={`${row.step.tool} ${row.step.detail}`} width={showWidth - STEP_OPEN_WIDTH} height={row.height} />
+                  <Button key={`tp-show-step-${i}-open`} plain dimColor={!isOpen} label={isOpen ? '⌄' : '›'} hover={{ bold: true }} onPress={() => parts.onToggleStep(row.step.id)} />
+                </Box>,
+                ...(isOpen
+                  ? [
+                      <Box key={`tp-show-step-${i}-more`} flexDirection="column" backgroundColor="#0d1117" width={showWidth} paddingX={2} paddingBottom={1}>
+                        <Text key="in-title" bold color={row.step.isError ? '#f85149' : '#3fb950'}>
+                          {`${row.step.isError ? '✗ failed' : '✓ ok'} · ${row.step.actor ?? 'main session'} · ${parts.clock(row.step.at)}`}
+                        </Text>
+                        <Text key="in-label" dimColor>
+                          Input
+                        </Text>
+                        {stepLines(row.step.input).map((one, n) => (
+                          <Text key={`in-${n}`} wrap="truncate-end">
+                            {one}
+                          </Text>
+                        ))}
+                        <Text key="out-label" dimColor>
+                          Result
+                        </Text>
+                        {stepLines(row.step.output).map((one, n) => (
+                          <Text key={`out-${n}`} wrap="truncate-end">
+                            {one}
+                          </Text>
+                        ))}
+                      </Box>,
+                    ]
+                  : []),
+              ]
+            })}
           </Box>,
         ],
       )
