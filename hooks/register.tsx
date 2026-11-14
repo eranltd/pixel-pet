@@ -68,9 +68,9 @@ import {
   writeSessionTldr,
   writeTldr,
 } from './side-pane'
-import type { PaneElements, SessionLine, SidePaneSettings } from './side-pane'
-import { TEAM_SHOW_RATIO, teamShowLines, teamShowSvg } from './team-show'
-import type { TeamShow } from './team-show'
+import type { SessionLine, SidePaneSettings } from './side-pane'
+import { teamShowSvg } from './team-show'
+import type { TeamShow, TeamStep } from './team-show'
 
 const PANE = 'plan-progress'
 const TITLE = 'Plan Progress'
@@ -1227,11 +1227,57 @@ async function setSubagentModel($: EngineInterface, model: string | undefined) {
   await refreshTeam($)
 }
 
-const TEAM_SHOW_PANE = 'bit-team-show'
+type TeamActivity = { steps: TeamStep[]; check: { command: string; isOk: boolean } | null; agentsDone: number }
 
-async function openTeamShow($: EngineInterface) {
-  await $.ui.open({ id: TEAM_SHOW_PANE, title: 'Team · live' })
-  await refreshTeam($)
+const activityAtom = atom({ plugin: 'pixel-pet', key: 'teamFeed' } as const, { steps: [], check: null, agentsDone: 0 } as TeamActivity)
+const FEED_STEPS = 6
+
+const CHECK_COMMAND = /\b(test|vitest|jest|pytest|tsc|lint|oxlint|eslint|typecheck|check)\b/
+
+// What a tool call did, in a few words: the command, the file, or the subagent's task.
+function stepOf(call: AnyCall, isError: boolean): TeamStep {
+  const tool = call.tool.includes('__') ? (call.tool.split('__').at(-1) ?? call.tool) : call.tool
+  const file = typeof call.file_path === 'string' ? (call.file_path.split('/').at(-1) ?? '') : ''
+  // Else the first plain string argument: a query, a channel, a pattern, a skill name.
+  const firstArg = Object.entries(call).find(([name, value]) => !['tool', 'tool_use_id', 'agentId'].includes(name) && typeof value === 'string' && value !== '')?.[1]
+  const detail =
+    typeof call.command === 'string'
+      ? firstLine(call.command, 60)
+      : file !== ''
+        ? file
+        : typeof call.description === 'string'
+          ? firstLine(call.description, 60)
+          : typeof firstArg === 'string'
+            ? firstLine(firstArg, 60)
+            : ''
+  return { tool, detail, isError }
+}
+
+async function recordActivity($: EngineInterface, call: AnyCall, isError: boolean) {
+  await update($, activityAtom, activity => ({
+    steps: [stepOf(call, isError), ...activity.steps].slice(0, FEED_STEPS),
+    check: call.tool === 'Bash' && typeof call.command === 'string' && CHECK_COMMAND.test(call.command) ? { command: firstLine(call.command, 60), isOk: !isError } : activity.check,
+    agentsDone: activity.agentsDone + ((call.tool === 'Agent' || call.tool === 'Task') && call.run_in_background !== true ? 1 : 0),
+  }))
+}
+
+async function teamShowOf($: EngineInterface): Promise<TeamShow> {
+  const team = await read($, teamAtom)
+  const mode = await read($, sessionModeAtom)
+  const plan = await read($, planAtom)
+  const activity = await read($, activityAtom)
+  return {
+    main: mode?.model ?? (await read($, usageAtom))?.model ?? '',
+    advisor: team?.advisor ?? null,
+    wakes: team?.wakes ?? null,
+    isWorking: await read($, runningAtom),
+    task: currentTask(plan),
+    progress: plan.tasks.length === 0 ? null : { done: countDone(plan.tasks), total: plan.tasks.length },
+    check: activity.check,
+    running: (await read($, runningAgentsAtom)).length,
+    agentsDone: activity.agentsDone,
+    steps: activity.steps,
+  }
 }
 
 async function openTeam($: EngineInterface) {
@@ -2952,7 +2998,7 @@ const collapsedSectionsAtom = atom({ plugin: 'pixel-pet', key: 'collapsedSection
 const COLLAPSED_KEY = 'side-pane.v1.collapsed'
 // The lists that run long start collapsed; the ticket's own sections start open.
 // The ticket's sections start folded so Slack, Code Review and Team show without scrolling.
-const COLLAPSED_BY_DEFAULT = new Set(['tp-ticket', 'tp-drafts', 'tp-prs', 'tp-exp', 'tp-design', 'tp-docs', 'tp-related', 'tp-people', 'tp-sessions'])
+const COLLAPSED_BY_DEFAULT = new Set(['tp-ticket', 'tp-drafts', 'tp-prs', 'tp-exp', 'tp-design', 'tp-docs', 'tp-related', 'tp-people', 'tp-sessions', 'tp-show', 'tp-slack'])
 
 // A section whose status changes in a way that matters blinks for a while; Code Review blinks for as long
 // as the session watches a PR (a babysit run, or the app's auto-fix).
@@ -3608,6 +3654,7 @@ export const register: Register = (on, options) => {
 
   on('turn.start', async ($, e, next) => {
     local.turnStartedAt = await $.clock.now()
+    await update($, activityAtom, activity => ({ ...activity, agentsDone: 0 }))
     await update($, runningAtom, () => true)
     await update($, attentionAtom, () => false)
     void retitlePanes($)
@@ -3689,6 +3736,10 @@ export const register: Register = (on, options) => {
       } else if (call.tool === 'Skill' && /babysit/i.test(String(call.skill ?? ''))) {
         await update($, watchingPrAtom, () => true)
       }
+    }
+    // The Agents drawing shows the main thread's last tool call, its last check and the subagents done this turn.
+    if (isMain && isSidePane() && ran.deny === undefined) {
+      await recordActivity($, call, ran.isError === true)
     }
     // Config drafts cannot be listed, so the side pane learns their codes from the results that print them.
     if (isSidePane() && ran.deny === undefined) {
@@ -3892,33 +3943,6 @@ export const register: Register = (on, options) => {
         ))}
       </Box>
     )
-  })
-
-  on('ui.render', { component: 'Pane', requestId: TEAM_SHOW_PANE }, async ($, e) => {
-    const { Box, Text, Svg } = $.ui.resolve(e) as PaneElements
-    const team = await read($, teamAtom)
-    const usage = await read($, usageAtom)
-    const show: TeamShow = {
-      main: (await read($, sessionModeAtom))?.model ?? usage?.model ?? '',
-      effort: (await read($, sessionModeAtom))?.effort ?? null,
-      advisor: team?.advisor ?? null,
-      wakes: team?.wakes ?? null,
-      subagent: team?.subagent ?? null,
-      agents: (await read($, runningAgentsAtom)).map(agent => agent.description),
-    }
-    if (!Svg) {
-      return (
-        <Box flexDirection="column">
-          {teamShowLines(show).map((row, i) => (
-            <Text key={`ts-line-${i}`} dimColor={row.startsWith('$')}>
-              {row}
-            </Text>
-          ))}
-        </Box>
-      )
-    }
-    const width = Math.max(320, e.props.bodyColumns * 7)
-    return <Svg source={teamShowSvg(show)} alt="The session's models as an agent tree" width={width} height={Math.round(width * TEAM_SHOW_RATIO)} isInteractive />
   })
 
   on('ui.render', { component: 'Pane', requestId: TEAM_PANE }, async ($, e) => {
@@ -4429,6 +4453,7 @@ export const register: Register = (on, options) => {
     const warmLeft = cacheAt === null ? null : cacheAt + ttl.minutes * 60_000 - (await read($, cacheNowAtom))
     const kiss = actionById('kiss')
     const collapsed = await read($, collapsedSectionsAtom)
+    const blinkUntil = await read($, blinkUntilAtom)
     const plan = await read($, planAtom)
     const task = currentTask(plan)
     const isWaiting = await read($, attentionAtom)
@@ -4447,14 +4472,14 @@ export const register: Register = (on, options) => {
       needYou: related.filter(other => other.needsYou).length,
       sessionsOffset: Math.min(await read($, sessionsOffsetAtom), Math.max(0, sessions.length - SIDE_PANE_SESSIONS)),
       sessionsShown: SIDE_PANE_SESSIONS,
-      isCollapsed: section => collapsed[section] ?? COLLAPSED_BY_DEFAULT.has(section),
+      isCollapsed: section => (section === 'tp-slack' && (blinkUntil['tp-slack'] ?? 0) > now ? false : (collapsed[section] ?? COLLAPSED_BY_DEFAULT.has(section))),
       onToggleSection: section => void toggleSection($, section),
       onFoldAll: (sections, isFolded) => void foldAll($, sections, isFolded),
       team: await read($, teamAtom),
       onAdvisor: model => void setAdvisor($, model),
       onSubagentModel: model => void setSubagentModel($, model),
-      onShowTeam: () => void openTeamShow($),
-      blinking: [...Object.keys(await read($, blinkUntilAtom)), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
+      teamShow: teamShowSvg(await teamShowOf($)),
+      blinking: [...Object.keys(blinkUntil), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
       isWorking,
       onScrollSessions: by => void scrollSidePaneSessions($, by),
       reviews: (await read($, sessionStatsAtom))?.reviews ?? [],

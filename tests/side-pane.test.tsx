@@ -276,7 +276,7 @@ test('Related Sessions sit last, collapsed until opened, with their age in days 
   // The ticket area sits above the separator; Slack, Gmail, Code Review, Sessions and Context below it, in that order.
   const separator = drawn.indexOf('"key":"tp-separator"')
   expect(drawn.indexOf('"key":"tp-people"')).toBeLessThan(separator)
-  const order = ['tp-slack', 'tp-gmail', 'tp-review', 'tp-team', 'tp-sessions', 'tp-context'].map(key => drawn.indexOf(`"key":"${key}"`))
+  const order = ['tp-gmail', 'tp-review', 'tp-team', 'tp-sessions', 'tp-slack', 'tp-context'].map(key => drawn.indexOf(`"key":"${key}"`))
   expect(order[0]).toBeGreaterThan(separator)
   expect([...order].sort((a, b) => a - b)).toEqual(order)
   // Waiting on you sorts first, in orange; the idle one is red with its age.
@@ -307,6 +307,8 @@ test('the demo fills the pane with made-up data and the real ticket comes back a
   expect(demo).toContain('PET-42 · Draw the pet beside the chat')
   const pane = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'Pane', requestId: 'ticket', props: PANE })
   await openTicketSections(pane)
+  // Slack sits folded in the footer until a message arrives.
+  await pane.press({ key: 'tp-slack-toggle' })
   const drawn = JSON.stringify(await pane.drawn())
   expect(drawn).toContain('Moves Bit into a side pane')
   expect(drawn).toContain('Dana Levi')

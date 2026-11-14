@@ -393,6 +393,11 @@ declare module 'claude-code' {
       isKeepingWarm: boolean
       linkedSessions: LinkedSession[]
       runningAgents: RunningAgent[]
+      teamFeed: {
+        steps: { tool: string; detail: string; isError: boolean }[]
+        check: { command: string; isOk: boolean } | null
+        agentsDone: number
+      }
       team: { advisor: string | null; subagent: string | null; wakes: number | null } | null
     }
   }

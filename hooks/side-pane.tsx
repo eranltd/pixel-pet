@@ -1,4 +1,5 @@
 import type { Elements, EngineInterface, RenderElement, RenderNode } from 'claude-code'
+import { TEAM_SHOW_WIDTH } from './team-show'
 
 import type {
   CiState,
@@ -1162,7 +1163,8 @@ export type SidePaneParts = {
   team: { advisor: string | null; wakes: number | null; subagent: string | null } | null
   onAdvisor: (model: string) => void
   onSubagentModel: (model: string | undefined) => void
-  onShowTeam: () => void
+  // The animated agent tree pinned above Context.
+  teamShow: { svg: string; height: number }
   // Sections whose status just changed, or Code Review while the session watches a PR.
   blinking: readonly string[]
   isWorking: boolean
@@ -1188,6 +1190,8 @@ export type SidePaneParts = {
 
 // Below this many rows of room the footer is not pinned; the ▲ ▼ buttons move the body by this much.
 const STICKY_MIN_ROWS = 8
+// The agent drawing stays pinned only while this many body rows remain.
+const SHOW_PIN_BODY_ROWS = 16
 const SCROLL_STEP_ROWS = 6
 
 const COLOR = {
@@ -1479,13 +1483,8 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
 
   ]
 
-  // Below the separator: what waits on you across sessions, then the sessions themselves.
-  const bottom: RenderNode[] = [
-    section(
-      'tp-slack',
-      'Slack',
-      'slackColor',
-      COLOR.slack,
+  // Slack sits pinned in the footer: folded, and open while a new message is fresh.
+  const slackRows =
       parts.slack.length === 0 && parts.slackError !== null
         ? [line('tp-slack-error', 'warning', COLOR.drafts, 'problem', <Text color={COLOR.drafts}>{oneLine(parts.slackError, 160)}</Text>)]
         : parts.slack.flatMap(convo => [
@@ -1498,11 +1497,10 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
               plainButton(`tp-slack-done-${convo.key}`, '✓', convo.onDone),
             ),
             ...(convo.latest === '' ? [] : [line(`tp-slack-${convo.key}-latest`, 'blank', MUTED, 'latest message', message(convo.latest), <Text dimColor>{convo.at}</Text>)]),
-          ]),
-      parts.slack.length === 0 ? undefined : plainButton('tp-slack-clear-all', 'clear all', parts.onClearSlack),
-    ),
-    section('tp-gmail', 'Gmail', 'gmail', COLOR.gmail, []),
-  ]
+          ])
+
+  // Below the separator: what waits on you across sessions, then the sessions themselves.
+  const bottom: RenderNode[] = [section('tp-gmail', 'Gmail', 'gmail', COLOR.gmail, [])]
 
   // Code Review: where review stands on each of the session's open PRs, and the threads that wait on you.
   const needYou = parts.reviews.reduce((sum, review) => sum + review.waiting.length + (review.decision === 'changes' ? 1 : 0), 0)
@@ -1590,7 +1588,6 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
               choices('tp-team-sub', [['haiku', 'haiku'], ['sonnet', 'sonnet'], ['inherit', undefined]], team.subagent, parts.onSubagentModel),
             ),
           ],
-      plainButton('tp-team-show', '▶ show', parts.onShowTeam, false),
     ),
   )
 
@@ -1742,9 +1739,40 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
       ))}
     </>
   )
+  // The agent tree sits pinned above Context while the sections above keep room to read; else it ends the body.
+  const showWidth = Math.min(TEAM_SHOW_WIDTH, Math.max(240, parts.columns * 7 - 40))
+  const showHeight = Math.round((parts.teamShow.height * showWidth) / TEAM_SHOW_WIDTH)
+  const showRows = Svg ? 2 + (parts.isCollapsed('tp-show') ? 0 : Math.ceil(showHeight / 20)) : 0
+  const showSection = Svg
+    ? section(
+        'tp-show',
+        'Agents',
+        'spark',
+        COLOR.team,
+        [
+          <Box key="tp-show-art">
+            <Svg source={parts.teamShow.svg} alt="The session's models as an agent tree" width={showWidth} height={showHeight} isInteractive />
+          </Box>,
+        ],
+      )
+    : null
+  const slackSection = section(
+    'tp-slack',
+    'Slack',
+    'slackColor',
+    COLOR.slack,
+    slackRows,
+    parts.slack.length === 0 ? undefined : plainButton('tp-slack-clear-all', 'clear all', parts.onClearSlack),
+    parts.slack.length === 0 ? undefined : parts.slack.length,
+  )
+  const slackFooterRows = 2 + (slackRows.length === 0 || parts.isCollapsed('tp-slack') ? 0 : slackRows.length)
+  const baseFooterRows = 2 + slackFooterRows + (parts.context === null ? 2 : parts.mode === null ? 5 : 6) + 2
+  const isShowPinned = showSection !== null && parts.rows - baseFooterRows - showRows >= SHOW_PIN_BODY_ROWS
   const footer = (
     <>
       {separator('tp-footer-separator')}
+      {slackSection}
+      {isShowPinned && showSection}
       {contextSection}
       <Box key="tp-foot" flexDirection="row" alignItems="center" columnGap={2} marginTop={1}>
         {ticket !== null && plainButton('tp-refresh', parts.isLoading ? 'Refreshing…' : `Updated ${parts.clock(ticket.loadedAt)}`, parts.onRefresh)}
@@ -1767,18 +1795,19 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
 
   // A pane too short for a pinned footer draws one long column the engine scrolls.
   // The separator, Context, and the button row.
-  const footerRows = 2 + (parts.context === null ? 2 : parts.mode === null ? 5 : 6) + 2
+  const footerRows = baseFooterRows + (isShowPinned ? showRows : 0)
   const roomRows = parts.rows - footerRows
   if (roomRows < STICKY_MIN_ROWS) {
     return (
       <Box flexDirection="column">
         {head}
+        {showSection}
         {footer}
       </Box>
     )
   }
   // The footer stays pinned: the pane is one screen tall, and the body above it slides inside its own clip.
-  const maxOffset = Math.max(0, bodyRows - roomRows + 2)
+  const maxOffset = Math.max(0, bodyRows + (isShowPinned ? 0 : showRows) - roomRows + 2)
   parts.onBodyRows(maxOffset)
   const offset = Math.min(parts.offset, maxOffset)
   return (
@@ -1786,6 +1815,7 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
       <Box key="tp-body" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
         <Box key="tp-body-inner" flexDirection="column" flexShrink={0} marginTop={-offset}>
           {head}
+          {!isShowPinned && showSection}
         </Box>
       </Box>
       {maxOffset > 0 && (
