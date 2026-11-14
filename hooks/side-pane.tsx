@@ -1162,6 +1162,7 @@ export type SidePaneParts = {
   team: { advisor: string | null; wakes: number | null; subagent: string | null } | null
   onAdvisor: (model: string) => void
   onSubagentModel: (model: string | undefined) => void
+  onShowTeam: () => void
   // Sections whose status just changed, or Code Review while the session watches a PR.
   blinking: readonly string[]
   isWorking: boolean
@@ -1589,6 +1590,7 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
               choices('tp-team-sub', [['haiku', 'haiku'], ['sonnet', 'sonnet'], ['inherit', undefined]], team.subagent, parts.onSubagentModel),
             ),
           ],
+      plainButton('tp-team-show', '▶ show', parts.onShowTeam, false),
     ),
   )
 

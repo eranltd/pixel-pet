@@ -68,7 +68,9 @@ import {
   writeSessionTldr,
   writeTldr,
 } from './side-pane'
-import type { SessionLine, SidePaneSettings } from './side-pane'
+import type { PaneElements, SessionLine, SidePaneSettings } from './side-pane'
+import { TEAM_SHOW_RATIO, teamShowLines, teamShowSvg } from './team-show'
+import type { TeamShow } from './team-show'
 
 const PANE = 'plan-progress'
 const TITLE = 'Plan Progress'
@@ -1222,6 +1224,13 @@ async function setAdvisor($: EngineInterface, model: string) {
 // Only this process: subagents started after this inherit it; settings.json stays as it is.
 async function setSubagentModel($: EngineInterface, model: string | undefined) {
   await $.env.set('CLAUDE_CODE_SUBAGENT_MODEL', model)
+  await refreshTeam($)
+}
+
+const TEAM_SHOW_PANE = 'bit-team-show'
+
+async function openTeamShow($: EngineInterface) {
+  await $.ui.open({ id: TEAM_SHOW_PANE, title: 'Team · live' })
   await refreshTeam($)
 }
 
@@ -3885,6 +3894,33 @@ export const register: Register = (on, options) => {
     )
   })
 
+  on('ui.render', { component: 'Pane', requestId: TEAM_SHOW_PANE }, async ($, e) => {
+    const { Box, Text, Svg } = $.ui.resolve(e) as PaneElements
+    const team = await read($, teamAtom)
+    const usage = await read($, usageAtom)
+    const show: TeamShow = {
+      main: (await read($, sessionModeAtom))?.model ?? usage?.model ?? '',
+      effort: (await read($, sessionModeAtom))?.effort ?? null,
+      advisor: team?.advisor ?? null,
+      wakes: team?.wakes ?? null,
+      subagent: team?.subagent ?? null,
+      agents: (await read($, runningAgentsAtom)).map(agent => agent.description),
+    }
+    if (!Svg) {
+      return (
+        <Box flexDirection="column">
+          {teamShowLines(show).map((row, i) => (
+            <Text key={`ts-line-${i}`} dimColor={row.startsWith('$')}>
+              {row}
+            </Text>
+          ))}
+        </Box>
+      )
+    }
+    const width = Math.max(320, e.props.bodyColumns * 7)
+    return <Svg source={teamShowSvg(show)} alt="The session's models as an agent tree" width={width} height={Math.round(width * TEAM_SHOW_RATIO)} isInteractive />
+  })
+
   on('ui.render', { component: 'Pane', requestId: TEAM_PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const team = await read($, teamAtom)
@@ -4417,6 +4453,7 @@ export const register: Register = (on, options) => {
       team: await read($, teamAtom),
       onAdvisor: model => void setAdvisor($, model),
       onSubagentModel: model => void setSubagentModel($, model),
+      onShowTeam: () => void openTeamShow($),
       blinking: [...Object.keys(await read($, blinkUntilAtom)), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
       isWorking,
       onScrollSessions: by => void scrollSidePaneSessions($, by),
