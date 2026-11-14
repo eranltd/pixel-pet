@@ -47,17 +47,19 @@ The ticket:
 
 Under the separator, what waits on you:
 
-- **Slack**: your DMs and mentions since your last reply. Each shows its latest message and the time it came. A long one scrolls past like a ticker. ✓ clears one, "clear all" clears them all.
 - **Gmail**: a headline for now.
 - **Code Review**: review on this session's own PRs (the branch's, and each one it opened): changes requested, the threads that wait on your reply with a **reply** link, and who the review waits on. The headline counts what needs you.
+- **Team**: the advisor the main model consults (`fable`, `opus` or off, through `/advisor`) and the model new subagents start on (`haiku`, `sonnet` or the main model's). The model in use is bright, the others dim; press one to switch. The subagent model holds for this session only.
 - **Related Sessions**: only the sessions that belong with this one: the ones the desktop app linked to it (the session that started it, and the ones it started), and the ones on the same ticket. Each shows its age in days: green runs or merged, orange waits on you, red idles. This session's subagents still at work follow, marked ✦.
 
 The footer stays at the bottom while the rest scrolls:
 
+- **Slack**: your DMs and mentions since your last reply, folded, with the count beside its caret. A new message opens it for 30 seconds while it blinks, then it folds again; opened by hand, it stays open. Each shows its latest message and the time it came. A long one scrolls past like a ticker. ✓ clears one, "clear all" clears them all.
+- **Agents**: what the session does behind the scenes, folded until you open it. On top, the task in hand and the plan's progress. Then a row only for what happened: the advisor's wake-ups, the last test, lint or type check with ✓ or ✗, and the subagents at work and done this turn. Under them, the last six tool calls, the newest on top, colored by kind (Bash, edits, reads, MCP tools, agents, failures in red), each subagent's call tagged with its type. It fills the pane's width and moves only while a turn runs. The **›** at the end of a row opens the **Step** pane: the call's status, tool, agent and time, its full input, and the start of its result. When the pane is too short, Agents moves to the end of the body so the sections above keep room.
 - **Context**: the share of the context window used, the tokens, and a bar. Under it, the model, its effort and fast mode. On the right, a warning when the prompt cache is about to expire, and `cache cold` once it has.
 - Last, when the pane last refreshed, a pixel snake that slithers (faster while Claude works), **Keep warm**, which sends one tiny request just before the cache expires, and **KISS**, which explains the topic with the [kiss](https://github.com/eranltd/kiss) skill.
 
-Every section folds from the caret beside its title, and Bit remembers it. Code Review and Related Sessions start folded. A section with nothing to show keeps its headline, faded. A section blinks for a few seconds when something in it changes that is worth a look: a session that starts to wait on you, a new review thread, CI that turns, a new draft. Code Review blinks for as long as the session babysits its PR or the app's auto-fix watches it.
+Every section folds from the caret beside its title, and Bit remembers it. The ticket's sections, Related Sessions, Slack and Agents start folded, so Code Review and Team show without scrolling. A section with nothing to show keeps its headline, faded. A section blinks for a few seconds when something in it changes that is worth a look: a session that starts to wait on you, a new review thread, CI that turns, a new draft. Code Review blinks for as long as the session babysits its PR or the app's auto-fix watches it.
 
 Claude can open the pane too: ask it to "open the session pane". Its `open_session_pane` tool refreshes the pane and returns what it shows as text. `demo: true` fills it with made-up data for screenshots, and `demo: false` brings the real data back. In a terminal, `/ticket` does the same.
 
@@ -101,7 +103,7 @@ A terminal session watches the folder and reloads the mod on every save. A deskt
 
 ### Options
 
-Four options fit the band to your repos. Each one is off until you set it, in `/config` or under `pluginConfigs` in `~/.claude/settings.json`:
+Five options fit the band to your repos and your taste. Each one is off until you set it, in `/config` or under `pluginConfigs` in `~/.claude/settings.json`:
 
 ```json
 {
@@ -122,6 +124,7 @@ Four options fit the band to your repos. Each one is off until you set it, in `/
 - `previewMarker`: text in the PR comment that carries your preview link. The band shows that link as `preview`.
 - `previewLinkMatch`: text the preview link contains, when that comment holds more than one link.
 - `globalsFiles`: repo files with a `GLOBALS=(...)` list of paths. When your branch changes one of those paths, the band warns that every app rebuilds.
+- `hidePlan`: `true` leaves the plan's phases, progress bar and task list out of the band.
 
 ### Side pane options
 
@@ -171,6 +174,7 @@ He also droops when a check fails, sits up with `needs you` when a tool call wai
 | `/pet` | Hide or show Bit. |
 | `/plan-progress [all\|plan\|demo\|mute\|unmute]` | Open the Plan Progress pane: this session's plan, or every session's. `mute` stops the chime. |
 | `/bit recap` · `/bit 1on1 <login>` · `/bit concentration` · `/bit impact <pr>` · `/bit worktrees` · `/bit squad [add\|remove <login>…]` · `/bit slack` | The rituals: a recap of the session, a one-on-one brief, a focus mode, a merge-impact watch, the worktree janitor, the squad list, the Slack connector. |
+| `/bit team` | Open the Team pane: the main model, the advisor and the subagent model, with buttons to switch each. The **team** action opens it too. |
 | `/bit demo` · `/bit demo off` | Fill the band with made-up sessions, Slack messages, a plan and a branch, for screenshots that carry no real names. Nothing is sent anywhere. `off` restores the real data. The desktop app's prompt does not pass mod commands through, so there use the **demo** button in the actions pane; it toggles. |
 | `/cache-keeper [ttl <minutes\|auto> \| fresh]` | The context line: status, the cache TTL, or summarize and start a fresh session with the summary in the prompt box. |
 | `/critique` | Review Claude's last response in a side pane. |
@@ -408,7 +412,7 @@ export const register: Register = on => {
 
 **Other sessions.** Each session writes a small JSON snapshot every five seconds under `~/.claude/plan-progress/sessions/` and reads the others' on each heartbeat. A snapshot older than three heartbeats is a closed or crashed session. The desktop app's own session id comes from the `CLAUDE_CODE_HOST_SESSION_ID` env var, and a `claude://` link built from it opens that session.
 
-**Panes.** `$.ui.open({ id, title })` opens a side pane; a `ui.render` hook on `{ component: 'Pane', requestId: id }` draws it. The mod has five: the side pane, the plan, the actions, the critique, the worktree janitor.
+**Panes.** `$.ui.open({ id, title })` opens a side pane; a `ui.render` hook on `{ component: 'Pane', requestId: id }` draws it. The mod has seven: the side pane, the plan, the actions, the critique, the worktree janitor, the team and the step.
 
 ### Things that bite
 
