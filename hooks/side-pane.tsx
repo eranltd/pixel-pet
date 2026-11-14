@@ -1158,6 +1158,10 @@ export type SidePaneParts = {
   isCollapsed: (section: string) => boolean
   onToggleSection: (section: string) => void
   onFoldAll: (sections: readonly string[], isCollapsed: boolean) => void
+  // The advisor and its wake-ups this session, and the model subagents start on; null until read.
+  team: { advisor: string | null; wakes: number | null; subagent: string | null } | null
+  onAdvisor: (model: string) => void
+  onSubagentModel: (model: string | undefined) => void
   // Sections whose status just changed, or Code Review while the session watches a PR.
   blinking: readonly string[]
   isWorking: boolean
@@ -1198,6 +1202,7 @@ const COLOR = {
   gmail: '#EA4335',
   sessions: '#2dd4bf',
   review: '#58a6ff',
+  team: '#c084fc',
   context: '#4C8DF6',
 }
 
@@ -1541,6 +1546,49 @@ export function drawSidePane(ui: PaneElements, parts: SidePaneParts): RenderElem
       ]),
       needYou > 0 ? <Text color={COLOR.experiment}>{`${needYou} need you`}</Text> : undefined,
       parts.reviews.length,
+    ),
+  )
+
+  // Team: the advisor the main model consults, and the model its subagents start on.
+  const team = parts.team
+  const choices = (key: string, options: readonly [string, string | undefined][], current: string | null, onPick: (value: string | undefined) => void) => (
+    <Box key={key} flexDirection="row" gap={1}>
+      {options.map(([label, value]) => plainButton(`${key}-${label}`, label, () => onPick(value), (value ?? null) !== current))}
+    </Box>
+  )
+  bottom.push(
+    section(
+      'tp-team',
+      'Team',
+      'spark',
+      COLOR.team,
+      team === null
+        ? []
+        : [
+            line(
+              'tp-team-advisor',
+              'dot',
+              COLOR.team,
+              'advisor',
+              <Text>
+                <Text dimColor>{'advisor '}</Text>
+                <Text bold>{team.advisor ?? 'off'}</Text>
+                {team.advisor !== null && team.wakes !== null && <Text dimColor>{` · wakes ${team.wakes}`}</Text>}
+              </Text>,
+              choices('tp-team-adv', [['fable', 'fable'], ['opus', 'opus'], ['off', undefined]], team.advisor, value => parts.onAdvisor(value ?? 'off')),
+            ),
+            line(
+              'tp-team-subagents',
+              'dot',
+              COLOR.sessions,
+              'subagents',
+              <Text>
+                <Text dimColor>{'subagents '}</Text>
+                <Text bold>{team.subagent ?? 'inherit'}</Text>
+              </Text>,
+              choices('tp-team-sub', [['haiku', 'haiku'], ['sonnet', 'sonnet'], ['inherit', undefined]], team.subagent, parts.onSubagentModel),
+            ),
+          ],
     ),
   )
 

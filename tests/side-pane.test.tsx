@@ -209,6 +209,14 @@ async function sessionOnTicket($: Parameters<TestBody>[0], on: Parameters<TestBo
   return clock
 }
 
+
+// The ticket's sections start folded; open every one that has a caret.
+async function openTicketSections(pane: { find: (q: { key: string }) => Promise<unknown>; press: (q: { key: string }) => Promise<unknown> }) {
+  for (const key of ['tp-ticket', 'tp-drafts', 'tp-prs', 'tp-exp', 'tp-design', 'tp-docs', 'tp-related', 'tp-people']) {
+    if ((await pane.find({ key: `${key}-toggle` })) !== undefined) await pane.press({ key: `${key}-toggle` })
+  }
+}
+
 test(
   'the side pane shows the ticket, its next step, PRs, the experiment, links and people',
   { options: OPTIONS },
@@ -226,6 +234,7 @@ test(
 
     for (const surface of ['terminal', 'desktop'] as const) {
       const pane = await $.ui.mount({ plugin: 'pixel-pet', surface, component: 'Pane', requestId: 'ticket', props: PANE })
+      if (surface === 'terminal') await openTicketSections(pane)
       const drawn = JSON.stringify(await pane.drawn())
       // The session's TL;DR is the first line; the ticket's sits in the Ticket section.
       expect(drawn.indexOf('Wiring the checkout ticket')).toBeLessThan(drawn.indexOf('"key":"tp-ticket"'))
@@ -267,7 +276,7 @@ test('Related Sessions sit last, collapsed until opened, with their age in days 
   // The ticket area sits above the separator; Slack, Gmail, Code Review, Sessions and Context below it, in that order.
   const separator = drawn.indexOf('"key":"tp-separator"')
   expect(drawn.indexOf('"key":"tp-people"')).toBeLessThan(separator)
-  const order = ['tp-slack', 'tp-gmail', 'tp-review', 'tp-sessions', 'tp-context'].map(key => drawn.indexOf(`"key":"${key}"`))
+  const order = ['tp-slack', 'tp-gmail', 'tp-review', 'tp-team', 'tp-sessions', 'tp-context'].map(key => drawn.indexOf(`"key":"${key}"`))
   expect(order[0]).toBeGreaterThan(separator)
   expect([...order].sort((a, b) => a - b)).toEqual(order)
   // Waiting on you sorts first, in orange; the idle one is red with its age.
@@ -283,10 +292,10 @@ test('Related Sessions sit last, collapsed until opened, with their age in days 
   expect(drawn).toContain('Explore agent')
   expect(drawn).not.toContain('Finished search')
   expect(await pane.find({ key: 'tp-session-open-agent-ag1' })).toBeUndefined()
-  // The ticket's own sections start open and collapse from their caret too.
-  expect(drawn).toContain('Fix CI on #7: lint')
+  // The ticket's own sections start folded, so Slack and Code Review show first, and open from their caret.
+  expect(drawn).not.toContain('Fix CI on #7: lint')
   await pane.press({ key: 'tp-ticket-toggle' })
-  expect(JSON.stringify(await pane.drawn())).not.toContain('Fix CI on #7: lint')
+  expect(JSON.stringify(await pane.drawn())).toContain('Fix CI on #7: lint')
   // The caret sits beside the title, not on the right.
   expect(JSON.stringify(await pane.find({ key: 'tp-sessions-title-row' }))).toContain('tp-sessions-toggle')
   await pane.unmount()
@@ -297,6 +306,7 @@ test('the demo fills the pane with made-up data and the real ticket comes back a
   const demo = JSON.stringify(await $.tool.call({ tool: 'mcp__pixel-pet__open_session_pane', demo: true } as never))
   expect(demo).toContain('PET-42 · Draw the pet beside the chat')
   const pane = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'Pane', requestId: 'ticket', props: PANE })
+  await openTicketSections(pane)
   const drawn = JSON.stringify(await pane.drawn())
   expect(drawn).toContain('Moves Bit into a side pane')
   expect(drawn).toContain('Dana Levi')
@@ -312,10 +322,9 @@ test('the demo fills the pane with made-up data and the real ticket comes back a
   expect(drawn).not.toContain('New checkout')
   expect(await pane.find({ key: 'tp-snake' })).toBeDefined()
   expect(drawn).not.toContain('Old idle session')
-  // Code Review covers the session's own PRs: folded with their count, and how much waits on you.
-  expect(drawn).toContain(`${CARET_CLOSED} 1`)
+  // Code Review covers the session's own PRs: open with their count, and how much waits on you.
+  expect(drawn).toContain(`${CARET_OPEN} 1`)
   expect(drawn).toContain('3 need you')
-  await pane.press({ key: 'tp-review-toggle' })
   const reviews = JSON.stringify(await pane.drawn())
   expect(reviews).toContain('changes requested · noa-cohen')
   expect(reviews).toContain('Can the caret sit right after the title?')
@@ -384,7 +393,6 @@ test('the status line on top names the task in hand, Context names the model, an
   expect(JSON.stringify(await pane.find({ key: 'tp-context-mode' }))).toContain('fast off')
 
   // Code Review shows where review stands on the PR the session opened: only the thread that waits on you counts.
-  await pane.press({ key: 'tp-review-toggle' })
   const review = JSON.stringify(await pane.drawn())
   expect(review).toContain('1 need you')
   expect(review).toContain('Please rename this')

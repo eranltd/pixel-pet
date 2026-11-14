@@ -965,6 +965,7 @@ const ACTIONS: readonly Action[] = [
   direct('refresh', 'refresh', 'GitHub and branch'),
   direct('worktrees', 'worktrees', 'worktree janitor'),
   direct('demo', 'demo', 'made-up band for screenshots'),
+  direct('team', 'team', 'main, advisor, subagent models'),
   direct('hide', 'hide', 'hide the band'),
 ]
 
@@ -1004,6 +1005,8 @@ function runAction($: EngineInterface, action: Action, isWorking: boolean) {
   } else if (action.id === 'worktrees') {
     void openWorktrees($)
   } else if (action.id === 'hide') {
+  } else if (action.id === 'team') {
+    void openTeam($)
     void update($, hiddenAtom, () => true)
   } else if (action.id === 'demo') {
     void (local.isDemo ? stopBandDemo($) : startBandDemo($))
@@ -1177,6 +1180,56 @@ async function openWorktrees($: EngineInterface) {
 }
 
 // ---- /bit: lead rituals on demand ----
+// ---- model team: main, advisor, subagents ----
+
+const TEAM_PANE = 'bit-team'
+const ADVISOR_MODELS = ['fable', 'opus'] as const
+const SUBAGENT_MODELS = ['haiku', 'sonnet'] as const
+
+type Team = { advisor: string | null; subagent: string | null; wakes: number | null }
+
+const teamAtom = atom({ plugin: 'pixel-pet', key: 'team' } as const, null as Team | null)
+
+// Each assistant row that holds a server_tool_use block named advisor is one wake-up of the advisor.
+async function countAdvisorWakes($: EngineInterface): Promise<number | null> {
+  const path = cacheLocal.transcriptPath
+  if (!path) return null
+  try {
+    const ran = await $.process.run(['grep', '-F', '"server_tool_use"', path], { timeoutMs: 5000 })
+    return ran.stdout.split('\n').filter(line => line.includes('"name":"advisor"') && line.includes('"type":"assistant"')).length
+  } catch {
+    return null
+  }
+}
+
+async function refreshTeam($: EngineInterface) {
+  try {
+    const settings = (await $.settings.read()) as Record<string, unknown>
+    const advisor = typeof settings.advisorModel === 'string' && settings.advisorModel !== '' ? settings.advisorModel : null
+    const subagent = (await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL')) || null
+    const wakes = await countAdvisorWakes($)
+    await update($, teamAtom, () => ({ advisor, subagent, wakes }))
+  } catch {
+    // Unreadable settings keep the last Team row in place.
+  }
+}
+
+async function setAdvisor($: EngineInterface, model: string) {
+  await $.command.run({ command: 'advisor', args: model })
+  await refreshTeam($)
+}
+
+// Only this process: subagents started after this inherit it; settings.json stays as it is.
+async function setSubagentModel($: EngineInterface, model: string | undefined) {
+  await $.env.set('CLAUDE_CODE_SUBAGENT_MODEL', model)
+  await refreshTeam($)
+}
+
+async function openTeam($: EngineInterface) {
+  await $.ui.open({ id: TEAM_PANE, title: 'Team' })
+  await refreshTeam($)
+}
+
 
 async function runBit($: EngineInterface, args: string): Promise<string> {
   const [sub = '', ...rest] = args.trim().split(/\s+/)
@@ -1215,6 +1268,10 @@ async function runBit($: EngineInterface, args: string): Promise<string> {
     return 'Bit: worktrees pane opened.'
   }
   if (sub === 'squad') {
+  if (sub === 'team') {
+    await openTeam($)
+    return 'Bit: team pane opened.'
+  }
     const [action, ...logins] = rest
     if ((action === 'add' || action === 'remove') && logins.length > 0) {
       const next = action === 'add' ? [...new Set([...squad, ...logins])] : squad.filter(one => !logins.includes(one))
@@ -1264,7 +1321,7 @@ async function runBit($: EngineInterface, args: string): Promise<string> {
       ? `Bit: no Slack connector answered (${(await read($, slackAtom)).error ?? 'no reason given'}). Give its name as /mcp lists it: /bit slack <name>.`
       : `Bit: Slack alerts on through "${slackLocal.server}".${slackLocal.lastError === null ? '' : ` Last search error: ${slackLocal.lastError}`}`
   }
-  return 'Usage: /bit recap | 1on1 <login> | concentration | impact <pr> | worktrees | squad [add|remove <login>...] | slack [test | <server name>] | demo [off]'
+  return 'Usage: /bit recap | 1on1 <login> | concentration | impact <pr> | worktrees | team | squad [add|remove <login>...] | slack [test | <server name>] | demo [off]'
 }
 
 // ---- Slack: DMs and @-mentions, read-only, through the session's Slack connector ----
@@ -2884,7 +2941,8 @@ const contextViewAtom = atom({ plugin: 'pixel-pet', key: 'contextView' } as cons
 const collapsedSectionsAtom = atom({ plugin: 'pixel-pet', key: 'collapsedSections' } as const, {} as Record<string, boolean>)
 const COLLAPSED_KEY = 'side-pane.v1.collapsed'
 // The lists that run long start collapsed; the ticket's own sections start open.
-const COLLAPSED_BY_DEFAULT = new Set(['tp-review', 'tp-sessions'])
+// The ticket's sections start folded so Slack, Code Review and Team show without scrolling.
+const COLLAPSED_BY_DEFAULT = new Set(['tp-ticket', 'tp-drafts', 'tp-prs', 'tp-exp', 'tp-design', 'tp-docs', 'tp-related', 'tp-people', 'tp-sessions'])
 
 // A section whose status changes in a way that matters blinks for a while; Code Review blinks for as long
 // as the session watches a PR (a babysit run, or the app's auto-fix).
@@ -3420,6 +3478,7 @@ export const register: Register = (on, options) => {
     void locateHostRecord($)
     const root = await $.session.root()
     local.project = root.split('/').filter(Boolean).at(-1) ?? root
+    void refreshTeam($)
     local.snapshotDir = await snapshotDirOf($)
     const stored = await $.store.get('isMuted')
     await update($, mutedAtom, () => stored === true)
@@ -3468,7 +3527,7 @@ export const register: Register = (on, options) => {
     await update($, lastActiveAtom, () => startedAt)
     await $.command.register({
       name: 'bit',
-      description: 'Bit: recap | 1on1 <login> | concentration | impact <pr> | worktrees | squad [add|remove <login>...] | slack | demo [off]',
+      description: 'Bit: recap | 1on1 <login> | concentration | impact <pr> | worktrees | team | squad [add|remove <login>...] | slack | demo [off]',
     })
     if (isSidePane()) {
       await startSidePane($)
@@ -3553,6 +3612,9 @@ export const register: Register = (on, options) => {
     await update($, runningAtom, () => false)
     const endedAt = await $.clock.now()
     await update($, lastActiveAtom, () => endedAt)
+    if (isSidePane() || (await $.ui.panes()).some(pane => pane.id === TEAM_PANE)) {
+      await refreshTeam($)
+    }
     void refreshCacheTtl($)
     void publish($)
     void retitlePanes($)
@@ -3823,6 +3885,57 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: ACTIONS_PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
+  on('ui.render', { component: 'Pane', requestId: TEAM_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const team = await read($, teamAtom)
+    const usage = await read($, usageAtom)
+    const mode = await read($, sessionModeAtom)
+    const agents = await read($, runningAgentsAtom)
+    const isWorking = await read($, runningAtom)
+    const main = (usage?.model || 'model').replace(/^claude-/, '')
+    const role = (id: string, branch: string, color: string, model: string, detail: string, buttons: JSX.Element[]) => (
+      <Box key={`team-${id}`} flexDirection="row" alignItems="center" gap={1}>
+        <Box key={`team-branch-${id}`} width={3} flexShrink={0}>
+          <Text dimColor>{branch}</Text>
+        </Box>
+        <Box key={`team-model-${id}`} width={14} flexShrink={0}>
+          <Text bold color={color}>{model}</Text>
+        </Box>
+        <Box key={`team-detail-${id}`} width={12} flexShrink={0}>
+          <Text dimColor>{detail}</Text>
+        </Box>
+        {buttons}
+      </Box>
+    )
+    const wakes = team?.advisor && team.wakes !== null ? `wakes ${team.wakes}` : ''
+    return (
+      <Box flexDirection="column">
+        {role('advisor', '●', 'magenta', team?.advisor ?? 'no advisor', wakes, [
+          ...ADVISOR_MODELS.map(model => (
+            <Button key={`team-adv-${model}`} label={model} dimColor={team?.advisor === model} onPress={() => void setAdvisor($, model)} />
+          )),
+          <Button key="team-adv-off" label="off" dimColor={team?.advisor === null} onPress={() => void setAdvisor($, 'off')} />,
+        ])}
+        {role('main', '┆', 'yellow', main, mode?.effort ?? '', [
+          <Button key="team-main-switch" label="switch" dimColor={isWorking} onPress={() => void (isWorking ? undefined : switchModel($))} />,
+        ])}
+        {role('subagent', '└', 'cyan', team?.subagent ?? 'inherit', agents.length > 0 ? `${agents.length} running` : '', [
+          ...SUBAGENT_MODELS.map(model => (
+            <Button key={`team-sub-${model}`} label={model} dimColor={team?.subagent === model} onPress={() => void setSubagentModel($, model)} />
+          )),
+          <Button key="team-sub-inherit" label="inherit" dimColor={team?.subagent === null} onPress={() => void setSubagentModel($, undefined)} />,
+        ])}
+        {agents.map(agent => (
+          <Box key={`team-agent-${agent.id}`} flexDirection="row" gap={1} paddingLeft={4}>
+            <Text color={agent.isWaiting ? 'yellow' : 'green'}>{agent.isWaiting ? '◌' : '✓'}</Text>
+            <Text wrap="truncate-end">{agent.description}</Text>
+            <Text dimColor>{agent.type}</Text>
+          </Box>
+        ))}
+      </Box>
+    )
+  })
+
     const favorite = await read($, favoriteAtom)
     const usage = await read($, usageAtom)
     const isWorking = await read($, runningAtom)
@@ -4038,9 +4151,7 @@ export const register: Register = (on, options) => {
             )}
             <Text bold>{`${done}/${plan.tasks.length}`}</Text>
           </Box>
-          <Text dimColor>{elapsed}</Text>
-          {background.length > 0 && <Text color="cyan">{` · ⟳ ${background.length} in background`}</Text>}
-        </Box>
+        )}
         {hasPlan && (
           <Box key="pet-tasks" flexDirection="column">
             {visibleTasks(plan.tasks, fit.tasks).map(task => (
@@ -4303,6 +4414,9 @@ export const register: Register = (on, options) => {
       reviews: (await read($, sessionStatsAtom))?.reviews ?? [],
       slack: slackConversations(slack, await read($, slackMarksAtom), now).map(convo => {
         const latest = convo.waiting.at(-1)
+      team: await read($, teamAtom),
+      onAdvisor: model => void setAdvisor($, model),
+      onSubagentModel: model => void setSubagentModel($, model),
         return {
           key: convo.channelId,
           name: convo.name,
