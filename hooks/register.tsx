@@ -552,6 +552,7 @@ const config = {
   previewMarker: '',
   previewLinkMatch: '',
   globalsFiles: [] as string[],
+  hidePlan: false,
   layout: 'band' as BitLayout,
   sidePane: {
     codeRepo: '',
@@ -964,8 +965,8 @@ const ACTIONS: readonly Action[] = [
   direct('critique', 'critique', 'self-critique pane'),
   direct('refresh', 'refresh', 'GitHub and branch'),
   direct('worktrees', 'worktrees', 'worktree janitor'),
-  direct('demo', 'demo', 'made-up band for screenshots'),
   direct('team', 'team', 'main, advisor, subagent models'),
+  direct('demo', 'demo', 'made-up band for screenshots'),
   direct('hide', 'hide', 'hide the band'),
 ]
 
@@ -1004,9 +1005,9 @@ function runAction($: EngineInterface, action: Action, isWorking: boolean) {
     void refreshAll($)
   } else if (action.id === 'worktrees') {
     void openWorktrees($)
-  } else if (action.id === 'hide') {
   } else if (action.id === 'team') {
     void openTeam($)
+  } else if (action.id === 'hide') {
     void update($, hiddenAtom, () => true)
   } else if (action.id === 'demo') {
     void (local.isDemo ? stopBandDemo($) : startBandDemo($))
@@ -1179,7 +1180,6 @@ async function openWorktrees($: EngineInterface) {
   await refreshWorktrees($)
 }
 
-// ---- /bit: lead rituals on demand ----
 // ---- model team: main, advisor, subagents ----
 
 const TEAM_PANE = 'bit-team'
@@ -1230,6 +1230,7 @@ async function openTeam($: EngineInterface) {
   await refreshTeam($)
 }
 
+// ---- /bit: lead rituals on demand ----
 
 async function runBit($: EngineInterface, args: string): Promise<string> {
   const [sub = '', ...rest] = args.trim().split(/\s+/)
@@ -1267,11 +1268,11 @@ async function runBit($: EngineInterface, args: string): Promise<string> {
     await openWorktrees($)
     return 'Bit: worktrees pane opened.'
   }
-  if (sub === 'squad') {
   if (sub === 'team') {
     await openTeam($)
     return 'Bit: team pane opened.'
   }
+  if (sub === 'squad') {
     const [action, ...logins] = rest
     if ((action === 'add' || action === 'remove') && logins.length > 0) {
       const next = action === 'add' ? [...new Set([...squad, ...logins])] : squad.filter(one => !logins.includes(one))
@@ -3455,6 +3456,7 @@ export const register: Register = (on, options) => {
   config.previewMarker = typeof options.previewMarker === 'string' ? options.previewMarker : ''
   config.previewLinkMatch = typeof options.previewLinkMatch === 'string' ? options.previewLinkMatch : ''
   config.globalsFiles = stringList(options.globalsFiles)
+  config.hidePlan = options.hidePlan === true
   config.layout = options.layout === 'side-pane' ? 'side-pane' : 'band'
   const optionText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
   config.sidePane = {
@@ -3476,9 +3478,9 @@ export const register: Register = (on, options) => {
     local.openedAt = await $.clock.now()
     local.hostSessionId = (await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')) ?? ''
     void locateHostRecord($)
+    void refreshTeam($)
     const root = await $.session.root()
     local.project = root.split('/').filter(Boolean).at(-1) ?? root
-    void refreshTeam($)
     local.snapshotDir = await snapshotDirOf($)
     const stored = await $.store.get('isMuted')
     await update($, mutedAtom, () => stored === true)
@@ -3610,11 +3612,11 @@ export const register: Register = (on, options) => {
       return done
     }
     await update($, runningAtom, () => false)
-    const endedAt = await $.clock.now()
-    await update($, lastActiveAtom, () => endedAt)
     if (isSidePane() || (await $.ui.panes()).some(pane => pane.id === TEAM_PANE)) {
       await refreshTeam($)
     }
+    const endedAt = await $.clock.now()
+    await update($, lastActiveAtom, () => endedAt)
     void refreshCacheTtl($)
     void publish($)
     void retitlePanes($)
@@ -3883,8 +3885,6 @@ export const register: Register = (on, options) => {
     )
   })
 
-  on('ui.render', { component: 'Pane', requestId: ACTIONS_PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
   on('ui.render', { component: 'Pane', requestId: TEAM_PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const team = await read($, teamAtom)
@@ -3936,6 +3936,8 @@ export const register: Register = (on, options) => {
     )
   })
 
+  on('ui.render', { component: 'Pane', requestId: ACTIONS_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
     const favorite = await read($, favoriteAtom)
     const usage = await read($, usageAtom)
     const isWorking = await read($, runningAtom)
@@ -4053,7 +4055,7 @@ export const register: Register = (on, options) => {
     const flashSlack = newestSlack !== undefined && now - newestSlack.seenAt < SLACK_SHOW_MS ? newestSlack : undefined
 
     const done = countDone(plan.tasks)
-    const hasPlan = isActive(plan)
+    const hasPlan = isActive(plan) && !config.hidePlan
     let pet
     let progressBar = null
     if (e.surface === 'terminal') {
@@ -4118,7 +4120,7 @@ export const register: Register = (on, options) => {
     )
 
     const status = (
-      <Box key="pet-status" flexDirection="column" marginLeft={fit.planGap} marginTop={isNarrow ? 1 : 0} flexShrink={1} minWidth={fit.planMin}>
+      <Box key="pet-status" flexDirection="column" marginLeft={fit.planGap} marginTop={isNarrow ? 1 : 0} flexShrink={1} minWidth={config.hidePlan ? 0 : fit.planMin}>
         {mood.kind === 'happy' && mood.text !== '' && (
           <Text color="green" wrap="truncate-end">
             ✓ {mood.text}
@@ -4140,16 +4142,20 @@ export const register: Register = (on, options) => {
             )}
           </Box>
         )}
-        <Box key="pet-plan-line" flexDirection="row">
-          {!hasPlan && <Text color="cyan">{(isWorking ? 'working' : 'idle') + ' '}</Text>}
-          <Box key="pet-plan-bar" flexDirection="row" alignItems="center" gap={1}>
-            {progressBar ?? (
-              <Text>
-                <Text color="green">{filled}</Text>
-                <Text dimColor>{empty}</Text>
-              </Text>
-            )}
-            <Text bold>{`${done}/${plan.tasks.length}`}</Text>
+        {!config.hidePlan && (
+          <Box key="pet-plan-line" flexDirection="row">
+            {!hasPlan && <Text color="cyan">{(isWorking ? 'working' : 'idle') + ' '}</Text>}
+            <Box key="pet-plan-bar" flexDirection="row" alignItems="center" gap={1}>
+              {progressBar ?? (
+                <Text>
+                  <Text color="green">{filled}</Text>
+                  <Text dimColor>{empty}</Text>
+                </Text>
+              )}
+              <Text bold>{`${done}/${plan.tasks.length}`}</Text>
+            </Box>
+            <Text dimColor>{elapsed}</Text>
+            {background.length > 0 && <Text color="cyan">{` · ⟳ ${background.length} in background`}</Text>}
           </Box>
         )}
         {hasPlan && (
@@ -4408,15 +4414,15 @@ export const register: Register = (on, options) => {
       isCollapsed: section => collapsed[section] ?? COLLAPSED_BY_DEFAULT.has(section),
       onToggleSection: section => void toggleSection($, section),
       onFoldAll: (sections, isFolded) => void foldAll($, sections, isFolded),
+      team: await read($, teamAtom),
+      onAdvisor: model => void setAdvisor($, model),
+      onSubagentModel: model => void setSubagentModel($, model),
       blinking: [...Object.keys(await read($, blinkUntilAtom)), ...((await read($, watchingPrAtom)) ? ['tp-review'] : [])],
       isWorking,
       onScrollSessions: by => void scrollSidePaneSessions($, by),
       reviews: (await read($, sessionStatsAtom))?.reviews ?? [],
       slack: slackConversations(slack, await read($, slackMarksAtom), now).map(convo => {
         const latest = convo.waiting.at(-1)
-      team: await read($, teamAtom),
-      onAdvisor: model => void setAdvisor($, model),
-      onSubagentModel: model => void setSubagentModel($, model),
         return {
           key: convo.channelId,
           name: convo.name,

@@ -34,6 +34,12 @@
       "description": "Repo files with a GLOBALS=(...) list of paths whose change rebuilds every app",
       "default": []
     },
+    "hidePlan": {
+      "type": "boolean",
+      "title": "Hide plan",
+      "description": "Leave the plan phases, progress bar and task list out of the band",
+      "default": false
+    },
     "layout": {
       "type": "string",
       "title": "Layout",

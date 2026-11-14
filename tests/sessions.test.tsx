@@ -36,6 +36,27 @@ test('the desktop task list fills the plan', async ($, on) => {
   await ui.unmount()
 })
 
+test('hidePlan leaves the phases, progress bar and tasks out of the band', { options: { hidePlan: true } }, async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: false } }))
+  on('tool.call', () => ({ result: {}, text: 'Plan shown (2 steps).' }))
+  await $.tool.call({
+    tool: 'mcp__ccd_turn__update_plan',
+    items: [
+      { content: 'Read the code', status: 'in_progress' },
+      { content: 'Test it', status: 'pending' },
+    ],
+    scope: 'first_task',
+  } as never)
+  const ui = await $.ui.mount({ plugin: 'pixel-pet', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  expect(await ui.find({ key: 'pet-sessions' })).toBeDefined()
+  expect(await ui.find({ key: 'pet-plan-line' })).toBeUndefined()
+  expect(await ui.find({ key: 'pet-phases' })).toBeUndefined()
+  expect(await ui.find({ key: 'pet-tasks' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('other sessions draw in the band even without a task list', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on)
