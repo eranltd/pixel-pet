@@ -2386,8 +2386,6 @@ Start directly with the first heading. No preamble and no sign-off.`
 const cacheLocal = {
   transcriptPath: null as string | null,
   model: null as string | null,
-  warnedFor: null as number | null,
-  cooledFor: null as number | null,
   pingedFor: null as number | null,
   burn: { five: null, week: null } as Record<'five' | 'week', BurnBase | null>,
 }
@@ -2456,23 +2454,6 @@ async function refreshCacheTtl($: EngineInterface) {
   await update($, ttlAtom, () => resolved)
 }
 
-async function notifyCache($: EngineInterface, text: string) {
-  $.ui.toast(text, { timeoutMs: 15_000 })
-  const quoted = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-  try {
-    await $.process.run(
-      ['osascript', '-e', `display notification ${quoted(text)} with title "Cache Keeper" sound name "Glass"`],
-      { timeoutMs: 5000 },
-    )
-  } catch {
-    try {
-      await $.process.run(['notify-send', 'Cache Keeper', text], { timeoutMs: 5000 })
-    } catch {
-      // The toast already showed; this host has no OS notifier.
-    }
-  }
-}
-
 async function cacheTick($: EngineInterface) {
   const t = await $.clock.now()
   const at = await read($, cacheAtAtom)
@@ -2489,15 +2470,6 @@ async function cacheTick($: EngineInterface) {
   if (isKeepingWarm && remaining > 0 && remaining <= Math.min(KEEP_WARM_LEAD_MS, (win.minutes * 60_000) / 2) && cacheLocal.pingedFor !== at && !(await read($, runningAtom))) {
     cacheLocal.pingedFor = at
     void keepWarm($)
-  }
-  if (!isKeepingWarm && remaining > 0 && remaining <= warnLeadMs(win.minutes) && cacheLocal.warnedFor !== at) {
-    cacheLocal.warnedFor = at
-    const minutes = Math.max(1, Math.round(remaining / 60_000))
-    await notifyCache($, `Prompt cache goes cold in ${minutes} min. Send a message to keep it warm, or Summarize, start fresh.`)
-  }
-  if (remaining <= 0 && cacheLocal.cooledFor !== at) {
-    cacheLocal.cooledFor = at
-    $.ui.toast('Prompt cache is cold: the next message re-writes the whole context.', { timeoutMs: 10_000 })
   }
 }
 
@@ -2580,8 +2552,6 @@ async function startCacheKeeper($: EngineInterface) {
 async function endCacheKeeper($: EngineInterface, e: SessionEndInput) {
   if (e.reason === 'clear') {
     cacheLocal.transcriptPath = null
-    cacheLocal.warnedFor = null
-    cacheLocal.cooledFor = null
     await update($, cacheAtAtom, () => null)
     void refreshCacheUsage($)
   }
