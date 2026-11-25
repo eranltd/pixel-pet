@@ -656,11 +656,9 @@ async function fetchCurrent($: EngineInterface): Promise<{ masterCi: CiState; cu
     return { masterCi: 'none', current: null }
   }
   const { owner, name } = cockpitLocal.repo
-  const ran = await $.process
-    .run(['gh', 'api', 'graphql', '-f', `query=${CURRENT_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `branch=${branch.name}`], {
-      timeoutMs: 30_000,
-    })
-    .catch(() => null)
+  const ran = await sharedGh($, `current.${owner}/${name}/${branch.name}`, [
+    'gh', 'api', 'graphql', '-f', `query=${CURRENT_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `branch=${branch.name}`,
+  ])
   if (ran === null || ran.exitCode !== 0) {
     return { masterCi: 'none', current: null }
   }
@@ -687,9 +685,29 @@ async function fetchCurrent($: EngineInterface): Promise<{ masterCi: CiState; cu
   }
 }
 
-async function refreshGitHub($: EngineInterface): Promise<string> {
+// The GitHub quota is per user, so every session running Bit shares one answer per key and poll window through the plugin store.
+async function sharedGh($: EngineInterface, key: string, argv: string[], force = false): Promise<{ exitCode: number; stdout: string; stderr: string } | null> {
   const now = await $.clock.now()
-  const ran = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${GITHUB_QUERY}`], { timeoutMs: 30_000 }).catch(() => null)
+  const storeKey = `github.v1.${key}`
+  const cached = (await $.store.get(storeKey)) as { at: number; stdout: string } | undefined
+  if (!force && cached !== undefined && now - cached.at < GITHUB_POLL_MS - 10_000) {
+    return { exitCode: 0, stdout: cached.stdout, stderr: '' }
+  }
+  const ran = await $.process.run(argv, { timeoutMs: 30_000 }).catch(() => null)
+  if (ran?.exitCode === 0) {
+    await $.store.set(storeKey, { at: now, stdout: ran.stdout })
+  }
+  return ran
+}
+
+async function isSleeping($: EngineInterface): Promise<boolean> {
+  const lastActiveAt = await read($, lastActiveAtom)
+  return lastActiveAt > 0 && (await $.clock.now()) - lastActiveAt > SLEEP_AFTER_MS
+}
+
+async function refreshGitHub($: EngineInterface, force = false): Promise<string> {
+  const now = await $.clock.now()
+  const ran = await sharedGh($, 'viewer', ['gh', 'api', 'graphql', '-f', `query=${GITHUB_QUERY}`], force)
   if (ran === null || ran.exitCode !== 0) {
     const reason = ran === null ? 'gh is not installed' : firstLine(ran.stderr || 'gh failed', 80)
     await update($, githubAtom, view => ({ ...view, error: reason }))
@@ -752,7 +770,7 @@ async function refreshGitHub($: EngineInterface): Promise<string> {
     mine
       .filter(pr => !pr.isDraft && pr.review === 'approved' && pr.ci === 'passing' && !pr.isStacked)
       .map(async pr => {
-        const view = await $.process.run(['gh', 'pr', 'view', pr.url, '--json', 'mergeable'], { timeoutMs: 30_000 }).catch(() => null)
+        const view = await sharedGh($, `mergeable.${pr.url}`, ['gh', 'pr', 'view', pr.url, '--json', 'mergeable'], force)
         try {
           pr.isMergeable = view?.exitCode === 0 && (JSON.parse(view.stdout) as { mergeable?: string }).mergeable === 'MERGEABLE'
         } catch {
@@ -794,7 +812,8 @@ async function refreshGitHub($: EngineInterface): Promise<string> {
   seen.reviews = new Set(reviews.map(pr => pr.key))
   seen.mergedAt = Math.max(seen.mergedAt ?? 0, ...mergedTimes)
 
-  const { masterCi, current } = await fetchCurrent($)
+  // A sleeping session keeps its last branch PR; the per-branch query is the part each session pays alone.
+  const { masterCi, current } = !force && (await isSleeping($)) ? await read($, githubAtom) : await fetchCurrent($)
   const reviewCount = reviews.filter(pr => isActionableReview(pr, now)).length
   await update($, githubAtom, () => ({ reviews, reviewCount, mine, fetchedAt: now, error: null, masterCi, current }))
   return `${reviewCount} PRs waiting on you · ${mine.length} open PRs of yours`
@@ -822,7 +841,7 @@ async function refreshAll($: EngineInterface) {
   await update($, refreshingAtom, () => true)
   try {
     await refreshBranch($)
-    const [github] = await Promise.all([refreshGitHub($), refreshOthers($)])
+    const [github] = await Promise.all([refreshGitHub($, true), refreshOthers($)])
     $.ui.toast(`Refreshed: ${github}`)
   } finally {
     await update($, refreshingAtom, () => false)
@@ -3108,7 +3127,8 @@ async function tickSidePane($: EngineInterface) {
   const id = await sessionTicketId($)
   const now = await $.clock.now()
   const due = ticket?.isCiRunning ? TICKET_CI_POLL_MS : TICKET_POLL_MS
-  if (id !== sidePaneLocal.ticketId || ticket === null || now - ticket.loadedAt >= due - 5000) {
+  const isStale = ticket === null || (now - ticket.loadedAt >= due - 5000 && !(await isSleeping($)))
+  if (id !== sidePaneLocal.ticketId || isStale) {
     void refreshTicket($)
   }
   void refreshSessionStats($)
