@@ -452,7 +452,7 @@ const KISS_PROMPT = 'Explain the topic we are discussing right now with the kiss
 
 type BandElements = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>
 
-const GITHUB_POLL_MS = 150_000
+const GITHUB_POLL_MS = 5 * 60_000
 const BRANCH_POLL_MS = 20_000
 // Direct review asks only: team requests from CODEOWNERS would bury the people waiting on you.
 const GITHUB_QUERY = `query {
@@ -3030,8 +3030,8 @@ const paneOffsetAtom = atom({ plugin: 'pixel-pet', key: 'paneOffset' } as const,
 const STATUS_COLOR = { active: '#3fb950', waiting: '#F0883E', idle: '#f85149' }
 
 const SIDE_PANE_TICK_MS = 60_000
-const TICKET_POLL_MS = 3 * 60_000
-const TICKET_CI_POLL_MS = 60_000
+const TICKET_POLL_MS = 5 * 60_000
+const TICKET_CI_POLL_MS = 5 * 60_000
 const TICKET_TURN_GAP_MS = 20_000
 const CONTEXT_GAP_MS = 15_000
 const TICKET_COMMAND = /\bgh\s+pr\s+(create|close|merge|ready|edit|reopen|comment|review)\b|\bgit\s+push\b|\bgh\s+api\b.*-X\s*(POST|PATCH|PUT)\b/
@@ -3121,7 +3121,7 @@ function refreshTicket($: EngineInterface, isForced = false): Promise<void> {
   return sidePaneLocal.loading
 }
 
-// Every minute: a new ticket on the branch loads at once; otherwise every 3 minutes, every minute while a PR's CI runs.
+// Every minute: a new ticket on the branch loads at once; otherwise every 5 minutes, CI running or not, to spare the per-user GitHub quota.
 async function tickSidePane($: EngineInterface) {
   const ticket = await read($, ticketAtom)
   const id = await sessionTicketId($)
